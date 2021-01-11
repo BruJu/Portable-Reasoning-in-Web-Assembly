@@ -1,7 +1,7 @@
 use crate::RcQuad;
 
-use identifier_forest::IndexingForest4;
-use identifier_forest::IndexingForest4Filter;
+use identifier_forest::compat::IndexingForest4;
+use identifier_forest::compat::IndexingForest4Filter;
 use sophia::dataset::MutableDataset;
 use sophia::dataset::DQuad;
 use sophia::dataset::DQuadSource;
