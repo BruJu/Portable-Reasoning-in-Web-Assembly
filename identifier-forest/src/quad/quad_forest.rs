@@ -33,6 +33,25 @@ pub trait QuadForestProfile {
     const PREBUILT: usize;
 }
 
+/// Type alias for the parameter type of the default order of a profile.
+pub type ParamDflt<P> =
+    <<P as QuadForestProfile>::OrderDflt as Block<<P as QuadForestProfile>::Identifier>>::Param;
+/// Type alias for the parameter type of the first additional order of a profile.
+pub type Param0<P> =
+    <<P as QuadForestProfile>::Order0 as Block<<P as QuadForestProfile>::Identifier>>::Param;
+/// Type alias for the parameter type of the second additional order of a profile.
+pub type Param1<P> =
+    <<P as QuadForestProfile>::Order1 as Block<<P as QuadForestProfile>::Identifier>>::Param;
+/// Type alias for the parameter type of the third additional order of a profile.
+pub type Param2<P> =
+    <<P as QuadForestProfile>::Order2 as Block<<P as QuadForestProfile>::Identifier>>::Param;
+/// Type alias for the parameter type of the fourth additional order of a profile.
+pub type Param3<P> =
+    <<P as QuadForestProfile>::Order3 as Block<<P as QuadForestProfile>::Identifier>>::Param;
+/// Type alias for the parameter type of the fifth additional order of a profile.
+pub type Param4<P> =
+    <<P as QuadForestProfile>::Order4 as Block<<P as QuadForestProfile>::Identifier>>::Param;
+
 /// A [`QuadForestProfile`] using SPOG order for the default tree,
 /// and 5 more additional trees built lasily.
 pub struct GSPOLazy<I = usize>(PhantomData<I>);
@@ -92,6 +111,41 @@ impl<I: Identifier> QuadForestProfile for SPOGLight<I> {
     const USED: usize = 0;
     const PREBUILT: usize = 0;
 }
+
+/// A [`QuadForestProfile`] using runtime-defined orders,
+/// and building up to 5 additional trees lazily.
+///
+/// In order to limit the number of indexes,
+/// set the param of some additional tree to the same [`Order`](super::rt_block::Order)
+/// as the default tree.
+pub struct LazyRt<I = usize>(PhantomData<I>);
+impl<I: Identifier> QuadForestProfile for LazyRt<I> {
+    type Identifier = I;
+    type OrderDflt = RtBlock<I>;
+    type Order0 = RtBlock<I>;
+    type Order1 = RtBlock<I>;
+    type Order2 = RtBlock<I>;
+    type Order3 = RtBlock<I>;
+    type Order4 = RtBlock<I>;
+    const USED: usize = 5;
+    const PREBUILT: usize = 0;
+}
+
+/// A [`QuadForestProfile`] using runtime-defined orders,
+/// and building 5 additional trees from the start.
+pub struct GreedyRt<I = usize>(PhantomData<I>);
+impl<I: Identifier> QuadForestProfile for GreedyRt<I> {
+    type Identifier = I;
+    type OrderDflt = RtBlock<I>;
+    type Order0 = RtBlock<I>;
+    type Order1 = RtBlock<I>;
+    type Order2 = RtBlock<I>;
+    type Order3 = RtBlock<I>;
+    type Order4 = RtBlock<I>;
+    const USED: usize = 5;
+    const PREBUILT: usize = 5;
+}
+
 /// A [`QuadForest`] stores [`Identifier`] quads in up to 6 trees,
 /// containing different types of [`Block`]s (sorted differently).
 ///
@@ -105,13 +159,45 @@ impl<I: Identifier> QuadForestProfile for SPOGLight<I> {
 /// any block order starting with SP or PS could be used.
 pub struct QuadForest<P: QuadForestProfile> {
     default_tree: BTreeSet<P::OrderDflt>,
-    trees: Vec<OnceCell<BTreeSet<[P::Identifier; 4]>>>,
+    trees: Vec<OnceCell<BTreeSet<P::OrderDflt>>>,
+    param_default: ParamDflt<P>,
+    #[allow(clippy::type_complexity)]
+    params: (Param0<P>, Param1<P>, Param2<P>, Param3<P>, Param4<P>),
 }
 
 impl<P: QuadForestProfile> QuadForest<P> {
-    /// Build an empty [`QuadForest`] complying with the profile `P`.
+    /// Build an empty [`QuadForest`] complying with the profile `P`,
+    /// using default values for the parameters of block orders.
     pub fn new() -> Self {
-        let this = Self::new_lazy(BTreeSet::new());
+        Self::new_param(
+            ParamDflt::<P>::default(),
+            Param0::<P>::default(),
+            Param1::<P>::default(),
+            Param2::<P>::default(),
+            Param3::<P>::default(),
+            Param4::<P>::default(),
+        )
+    }
+
+    /// Build an empty [`QuadForest`] complying with the profile `P`,
+    /// providing explicit the parameters of block orders.
+    pub fn new_param(
+        param_default: ParamDflt<P>,
+        param0: Param0<P>,
+        param1: Param1<P>,
+        param2: Param2<P>,
+        param3: Param3<P>,
+        param4: Param4<P>,
+    ) -> Self {
+        let this = Self::new_lazy(
+            BTreeSet::new(),
+            param_default,
+            param0,
+            param1,
+            param2,
+            param3,
+            param4,
+        );
         for i in 0..P::PREBUILT {
             this.trees[i].set(BTreeSet::new()).unwrap()
         }
@@ -119,7 +205,15 @@ impl<P: QuadForestProfile> QuadForest<P> {
     }
 
     /// Build an empty [`QuadForest`] with no additional tree built.
-    fn new_lazy(default_tree: BTreeSet<P::OrderDflt>) -> Self {
+    fn new_lazy(
+        default_tree: BTreeSet<P::OrderDflt>,
+        param_default: ParamDflt<P>,
+        param0: Param0<P>,
+        param1: Param1<P>,
+        param2: Param2<P>,
+        param3: Param3<P>,
+        param4: Param4<P>,
+    ) -> Self {
         debug_assert!(
             (0..=5).contains(&P::USED),
             "This profile is inconsistent, USED must be in [0;5]"
@@ -128,9 +222,36 @@ impl<P: QuadForestProfile> QuadForest<P> {
             (0..=P::USED).contains(&P::PREBUILT),
             "This profile is inconsistent, PREBUILT must be in [0;USED]"
         );
+        debug_assert_eq!(
+            std::mem::size_of::<P::OrderDflt>(),
+            std::mem::size_of::<P::Order0>(),
+            "All block orders of a profile must have the same size."
+        );
+        debug_assert_eq!(
+            std::mem::size_of::<P::OrderDflt>(),
+            std::mem::size_of::<P::Order1>(),
+            "All block orders of a profile must have the same size."
+        );
+        debug_assert_eq!(
+            std::mem::size_of::<P::OrderDflt>(),
+            std::mem::size_of::<P::Order2>(),
+            "All block orders of a profile must have the same size."
+        );
+        debug_assert_eq!(
+            std::mem::size_of::<P::OrderDflt>(),
+            std::mem::size_of::<P::Order3>(),
+            "All block orders of a profile must have the same size."
+        );
+        debug_assert_eq!(
+            std::mem::size_of::<P::OrderDflt>(),
+            std::mem::size_of::<P::Order4>(),
+            "All block orders of a profile must have the same size."
+        );
         QuadForest {
             default_tree,
             trees: vec![OnceCell::new(); P::USED],
+            param_default,
+            params: (param0, param1, param2, param3, param4),
         }
     }
 
@@ -146,7 +267,8 @@ impl<P: QuadForestProfile> QuadForest<P> {
 
     /// Whether this forest contains a given quad.
     pub fn contains(&self, spog_quad: [P::Identifier; 4]) -> bool {
-        self.default_tree.contains(&spog_quad.into())
+        self.default_tree
+            .contains(&spog_quad.into_block(self.param_default))
     }
 
     /// Iter over all the quads stored in this [`QuadForest`],
@@ -163,13 +285,13 @@ impl<P: QuadForestProfile> QuadForest<P> {
         &self,
         spog_pattern: [Option<P::Identifier>; 4],
     ) -> Box<dyn Iterator<Item = [P::Identifier; 4]> + '_> {
-        match self.best_tree_no_build(&spog_pattern) {
-            -1 => iter_matching(&self.default_tree, spog_pattern),
-            0 => iter_matching(self.get_tree0().unwrap(), spog_pattern),
-            1 => iter_matching(self.get_tree1().unwrap(), spog_pattern),
-            2 => iter_matching(self.get_tree2().unwrap(), spog_pattern),
-            3 => iter_matching(self.get_tree3().unwrap(), spog_pattern),
-            4 => iter_matching(self.get_tree4().unwrap(), spog_pattern),
+        match dbg!(self.best_tree_no_build(&spog_pattern)) {
+            -1 => iter_matching(&self.default_tree, spog_pattern, self.param_default),
+            0 => iter_matching(self.get_tree0().unwrap(), spog_pattern, self.params.0),
+            1 => iter_matching(self.get_tree1().unwrap(), spog_pattern, self.params.1),
+            2 => iter_matching(self.get_tree2().unwrap(), spog_pattern, self.params.2),
+            3 => iter_matching(self.get_tree3().unwrap(), spog_pattern, self.params.3),
+            4 => iter_matching(self.get_tree4().unwrap(), spog_pattern, self.params.4),
             _ => unreachable!(),
         }
     }
@@ -189,13 +311,13 @@ impl<P: QuadForestProfile> QuadForest<P> {
         &self,
         spog_pattern: [Option<P::Identifier>; 4],
     ) -> Box<dyn Iterator<Item = [P::Identifier; 4]> + '_> {
-        match self.best_tree(&spog_pattern) {
-            -1 => iter_matching(&self.default_tree, spog_pattern),
-            0 => iter_matching(self.ensure_tree0(), spog_pattern),
-            1 => iter_matching(self.ensure_tree1(), spog_pattern),
-            2 => iter_matching(self.ensure_tree2(), spog_pattern),
-            3 => iter_matching(self.ensure_tree3(), spog_pattern),
-            4 => iter_matching(self.ensure_tree4(), spog_pattern),
+        match dbg!(self.best_tree(&spog_pattern)) {
+            -1 => iter_matching(&self.default_tree, spog_pattern, self.param_default),
+            0 => iter_matching(self.ensure_tree0(), spog_pattern, self.params.0),
+            1 => iter_matching(self.ensure_tree1(), spog_pattern, self.params.1),
+            2 => iter_matching(self.ensure_tree2(), spog_pattern, self.params.2),
+            3 => iter_matching(self.ensure_tree3(), spog_pattern, self.params.3),
+            4 => iter_matching(self.ensure_tree4(), spog_pattern, self.params.4),
             _ => unreachable!(),
         }
     }
@@ -205,22 +327,24 @@ impl<P: QuadForestProfile> QuadForest<P> {
     /// Return `true` if the quad was actually inserted,
     /// or `false` if it was already present before.
     pub fn insert(&mut self, spog: [P::Identifier; 4]) -> bool {
+        let params = self.params; // copy required by the borrow checker
         if let Some(tree) = self.get_tree0_mut() {
-            tree.insert(spog.into());
+            tree.insert(spog.into_block(params.0));
         }
         if let Some(tree) = self.get_tree1_mut() {
-            tree.insert(spog.into());
+            tree.insert(spog.into_block(params.1));
         }
         if let Some(tree) = self.get_tree2_mut() {
-            tree.insert(spog.into());
+            tree.insert(spog.into_block(params.2));
         }
         if let Some(tree) = self.get_tree3_mut() {
-            tree.insert(spog.into());
+            tree.insert(spog.into_block(params.3));
         }
         if let Some(tree) = self.get_tree4_mut() {
-            tree.insert(spog.into());
+            tree.insert(spog.into_block(params.4));
         }
-        self.default_tree.insert(spog.into())
+        self.default_tree
+            .insert(spog.into_block(self.param_default))
     }
 
     /// Remove a new quad from this [`QuadForest`].
@@ -228,22 +352,24 @@ impl<P: QuadForestProfile> QuadForest<P> {
     /// Return `true` if the quad was actually removed,
     /// or `false` if it was not found.
     pub fn remove(&mut self, spog: [P::Identifier; 4]) -> bool {
+        let params = self.params; // copy required by the borrow checker
         if let Some(tree) = self.get_tree0_mut() {
-            tree.remove(&spog.into());
+            tree.remove(&spog.into_block(params.0));
         }
         if let Some(tree) = self.get_tree1_mut() {
-            tree.remove(&spog.into());
+            tree.remove(&spog.into_block(params.1));
         }
         if let Some(tree) = self.get_tree2_mut() {
-            tree.remove(&spog.into());
+            tree.remove(&spog.into_block(params.2));
         }
         if let Some(tree) = self.get_tree3_mut() {
-            tree.remove(&spog.into());
+            tree.remove(&spog.into_block(params.3));
         }
         if let Some(tree) = self.get_tree4_mut() {
-            tree.remove(&spog.into());
+            tree.remove(&spog.into_block(params.4));
         }
-        self.default_tree.remove(&spog.into())
+        self.default_tree
+            .remove(&spog.into_block(self.param_default))
     }
 
     /// Borrow the underlying default tree
@@ -318,8 +444,11 @@ impl<P: QuadForestProfile> QuadForest<P> {
 
     fn ensure_tree0(&self) -> &BTreeSet<P::Order0> {
         let tree = self.trees[0].get_or_init(|| {
-            let tree: BTreeSet<P::Order0> =
-                self.default_tree.iter().map(|blk| blk.convert()).collect();
+            let tree: BTreeSet<P::Order0> = self
+                .default_tree
+                .iter()
+                .map(|blk| blk.convert_with(self.params.0))
+                .collect();
             unsafe { transmute(tree) }
         });
         unsafe { &*(tree as *const _ as *const _) } // convert from BTreeSet<[I;4]> to BTreeSet<Block>
@@ -327,8 +456,11 @@ impl<P: QuadForestProfile> QuadForest<P> {
 
     fn ensure_tree1(&self) -> &BTreeSet<P::Order1> {
         let tree = self.trees[1].get_or_init(|| {
-            let tree: BTreeSet<P::Order1> =
-                self.default_tree.iter().map(|blk| blk.convert()).collect();
+            let tree: BTreeSet<P::Order1> = self
+                .default_tree
+                .iter()
+                .map(|blk| blk.convert_with(self.params.1))
+                .collect();
             unsafe { transmute(tree) }
         });
         unsafe { &*(tree as *const _ as *const _) } // convert from BTreeSet<[I;4]> to BTreeSet<Block>
@@ -336,8 +468,11 @@ impl<P: QuadForestProfile> QuadForest<P> {
 
     fn ensure_tree2(&self) -> &BTreeSet<P::Order2> {
         let tree = self.trees[2].get_or_init(|| {
-            let tree: BTreeSet<P::Order2> =
-                self.default_tree.iter().map(|blk| blk.convert()).collect();
+            let tree: BTreeSet<P::Order2> = self
+                .default_tree
+                .iter()
+                .map(|blk| blk.convert_with(self.params.2))
+                .collect();
             unsafe { transmute(tree) }
         });
         unsafe { &*(tree as *const _ as *const _) } // convert from BTreeSet<[I;4]> to BTreeSet<Block>
@@ -345,8 +480,11 @@ impl<P: QuadForestProfile> QuadForest<P> {
 
     fn ensure_tree3(&self) -> &BTreeSet<P::Order3> {
         let tree = self.trees[3].get_or_init(|| {
-            let tree: BTreeSet<P::Order3> =
-                self.default_tree.iter().map(|blk| blk.convert()).collect();
+            let tree: BTreeSet<P::Order3> = self
+                .default_tree
+                .iter()
+                .map(|blk| blk.convert_with(self.params.3))
+                .collect();
             unsafe { transmute(tree) }
         });
         unsafe { &*(tree as *const _ as *const _) } // convert from BTreeSet<[I;4]> to BTreeSet<Block>
@@ -354,8 +492,11 @@ impl<P: QuadForestProfile> QuadForest<P> {
 
     fn ensure_tree4(&self) -> &BTreeSet<P::Order4> {
         let tree = self.trees[4].get_or_init(|| {
-            let tree: BTreeSet<P::Order4> =
-                self.default_tree.iter().map(|blk| blk.convert()).collect();
+            let tree: BTreeSet<P::Order4> = self
+                .default_tree
+                .iter()
+                .map(|blk| blk.convert_with(self.params.4))
+                .collect();
             unsafe { transmute(tree) }
         });
         unsafe { &*(tree as *const _ as *const _) } // convert from BTreeSet<[I;4]> to BTreeSet<Block>
@@ -363,7 +504,7 @@ impl<P: QuadForestProfile> QuadForest<P> {
 
     /// Find the most appropriate tree that is already allocated for handling the given pattern
     fn best_tree_no_build(&self, spog_pattern: &[Option<P::Identifier>; 4]) -> isize {
-        let mut smax = P::OrderDflt::priority_for(&spog_pattern);
+        let mut smax = P::OrderDflt::priority_for(&spog_pattern, self.param_default);
         let mut imax = -1;
         let scores = self.make_scores(spog_pattern);
         for (i, score) in scores.iter().enumerate() {
@@ -380,7 +521,10 @@ impl<P: QuadForestProfile> QuadForest<P> {
 
     /// Find the most appropriate tree, allocated or not, for handling the given pattern
     fn best_tree(&self, spog_pattern: &[Option<P::Identifier>; 4]) -> isize {
-        let mut smax = (P::OrderDflt::priority_for(&spog_pattern), 1_u8);
+        let mut smax = (
+            P::OrderDflt::priority_for(&spog_pattern, self.param_default),
+            1_u8,
+        );
         let mut imax = -1;
         let scores = self.make_scores(spog_pattern);
         for (i, score) in scores.iter().enumerate() {
@@ -395,19 +539,39 @@ impl<P: QuadForestProfile> QuadForest<P> {
     fn make_scores(&self, spog_pattern: &[Option<P::Identifier>; 4]) -> Vec<(u8, u8)> {
         let mut scores = Vec::with_capacity(P::USED);
         if P::USED > 0 {
-            scores.push(index_conformance(&spog_pattern, self.get_tree0()));
+            scores.push(index_conformance(
+                &spog_pattern,
+                self.get_tree0(),
+                self.params.0,
+            ));
         }
         if P::USED > 1 {
-            scores.push(index_conformance(&spog_pattern, self.get_tree1()));
+            scores.push(index_conformance(
+                &spog_pattern,
+                self.get_tree1(),
+                self.params.1,
+            ));
         }
         if P::USED > 2 {
-            scores.push(index_conformance(&spog_pattern, self.get_tree2()));
+            scores.push(index_conformance(
+                &spog_pattern,
+                self.get_tree2(),
+                self.params.2,
+            ));
         }
         if P::USED > 3 {
-            scores.push(index_conformance(&spog_pattern, self.get_tree3()));
+            scores.push(index_conformance(
+                &spog_pattern,
+                self.get_tree3(),
+                self.params.3,
+            ));
         }
         if P::USED > 4 {
-            scores.push(index_conformance(&spog_pattern, self.get_tree4()));
+            scores.push(index_conformance(
+                &spog_pattern,
+                self.get_tree4(),
+                self.params.4,
+            ));
         }
         scores
     }
@@ -424,7 +588,18 @@ impl<P: QuadForestProfile> std::iter::FromIterator<[P::Identifier; 4]> for QuadF
     where
         T: IntoIterator<Item = [P::Identifier; 4]>,
     {
-        let this = Self::new_lazy(iter.into_iter().map(P::OrderDflt::from).collect());
+        let pdef = ParamDflt::<P>::default();
+        let this = Self::new_lazy(
+            iter.into_iter()
+                .map(|data| P::OrderDflt::new(data, pdef))
+                .collect(),
+            pdef,
+            Param0::<P>::default(),
+            Param1::<P>::default(),
+            Param2::<P>::default(),
+            Param3::<P>::default(),
+            Param4::<P>::default(),
+        );
         if P::PREBUILT > 0 {
             this.ensure_tree0();
         }
@@ -451,8 +626,9 @@ impl<P: QuadForestProfile> std::iter::FromIterator<[P::Identifier; 4]> for QuadF
 fn index_conformance<B: Block<I>, I: Identifier>(
     spog_pattern: &[Option<I>; 4],
     tree: Option<&BTreeSet<B>>,
+    param: B::Param,
 ) -> (u8, u8) {
-    let c = B::priority_for(spog_pattern);
+    let c = B::priority_for(spog_pattern, param);
     let built = match tree {
         None => 0,
         Some(_) => 1,
@@ -463,8 +639,9 @@ fn index_conformance<B: Block<I>, I: Identifier>(
 fn iter_matching<B: Block<I>, I: Identifier>(
     tree: &BTreeSet<B>,
     spog_pattern: [Option<I>; 4],
+    param: B::Param,
 ) -> Box<dyn Iterator<Item = [I; 4]> + '_> {
-    let (range, filter) = B::range_and_filter(spog_pattern);
+    let (range, filter) = dbg!(B::range_and_filter(spog_pattern, param));
     let ranged = tree.range(range).copied();
     if filter[..] == [None, None, None, None] {
         Box::new(ranged.map(B::into))
@@ -540,6 +717,28 @@ mod test {
         assert_eq!(qf.best_tree_no_build(&p(0, 0, 3, 4)), -1);
         assert_eq!(qf.best_tree_no_build(&p(1, 0, 3, 4)), -1);
         assert_eq!(qf.best_tree_no_build(&p(1, 2, 3, 4)), -1);
+
+        use Order::*;
+        let qf = QuadForest::<LazyRt>::new_param(GSPO, SPOG, PGSO, OPSG, SOGP, GOPS);
+        assert_eq!(qf.best_tree_no_build(&p(1, 0, 0, 0)), -1);
+        assert_eq!(qf.best_tree_no_build(&p(0, 2, 0, 0)), -1);
+        assert_eq!(qf.best_tree_no_build(&p(0, 0, 3, 0)), -1);
+        assert_eq!(qf.best_tree_no_build(&p(0, 0, 0, 4)), -1);
+        assert_eq!(qf.best_tree_no_build(&p(1, 2, 0, 0)), -1);
+        assert_eq!(qf.best_tree_no_build(&p(0, 2, 3, 0)), -1);
+        assert_eq!(qf.best_tree_no_build(&p(0, 0, 3, 4)), -1);
+        assert_eq!(qf.best_tree_no_build(&p(1, 0, 3, 4)), -1);
+        assert_eq!(qf.best_tree_no_build(&p(1, 2, 3, 4)), -1);
+        qf.ensure_tree1();
+        assert_eq!(qf.best_tree_no_build(&p(1, 0, 0, 0)), -1);
+        assert_eq!(qf.best_tree_no_build(&p(0, 2, 0, 0)), 1);
+        assert_eq!(qf.best_tree_no_build(&p(0, 0, 3, 0)), -1);
+        assert_eq!(qf.best_tree_no_build(&p(0, 0, 0, 4)), -1);
+        assert_eq!(qf.best_tree_no_build(&p(1, 2, 0, 0)), 1);
+        assert_eq!(qf.best_tree_no_build(&p(0, 2, 3, 0)), 1);
+        assert_eq!(qf.best_tree_no_build(&p(0, 0, 3, 4)), -1);
+        assert_eq!(qf.best_tree_no_build(&p(1, 0, 3, 4)), -1);
+        assert_eq!(qf.best_tree_no_build(&p(1, 2, 3, 4)), -1);
     }
 
     #[test]
@@ -566,7 +765,7 @@ mod test {
         assert_eq!(qf.best_tree(&p(1, 0, 3, 4)), 3);
         assert_eq!(qf.best_tree(&p(1, 2, 3, 4)), -1);
 
-        let qf = QuadForest::<SPOGLight>::new();
+        let qf = QuadForest::<GSPOLight>::new();
         assert_eq!(qf.best_tree(&p(1, 0, 0, 0)), -1);
         assert_eq!(qf.best_tree(&p(0, 2, 0, 0)), -1);
         assert_eq!(qf.best_tree(&p(0, 0, 3, 0)), -1);
@@ -586,6 +785,18 @@ mod test {
         assert_eq!(qf.best_tree(&p(0, 2, 3, 0)), -1);
         assert_eq!(qf.best_tree(&p(0, 0, 3, 4)), -1);
         assert_eq!(qf.best_tree(&p(1, 0, 3, 4)), -1);
+        assert_eq!(qf.best_tree(&p(1, 2, 3, 4)), -1);
+
+        use Order::*;
+        let qf = QuadForest::<LazyRt>::new_param(GSPO, SPOG, PGSO, OPSG, SOGP, GOPS);
+        assert_eq!(qf.best_tree(&p(1, 0, 0, 0)), 0);
+        assert_eq!(qf.best_tree(&p(0, 2, 0, 0)), 1);
+        assert_eq!(qf.best_tree(&p(0, 0, 3, 0)), 2);
+        assert_eq!(qf.best_tree(&p(0, 0, 0, 4)), -1);
+        assert_eq!(qf.best_tree(&p(1, 2, 0, 0)), 0);
+        assert_eq!(qf.best_tree(&p(0, 2, 3, 0)), 2);
+        assert_eq!(qf.best_tree(&p(0, 0, 3, 4)), 4);
+        assert_eq!(qf.best_tree(&p(1, 0, 3, 4)), 3);
         assert_eq!(qf.best_tree(&p(1, 2, 3, 4)), -1);
     }
 
@@ -596,9 +807,16 @@ mod test {
         for (pattern, expected) in iter_matching_tests() {
             assert_eq!(
                 set(qf.iter_matching_no_build(pattern)),
-                set(expected.clone())
+                set(expected.clone()),
+                "for pattern {:?}",
+                pattern
             );
-            assert_eq!(set(qf.iter_matching(pattern)), set(expected));
+            assert_eq!(
+                set(qf.iter_matching(pattern)),
+                set(expected),
+                "for pattern {:?}",
+                pattern
+            );
         }
     }
 
@@ -607,17 +825,32 @@ mod test {
         let mut qf = QuadForest::<GSPOLazy>::new();
         populate(&mut qf);
         for (pattern, expected) in iter_matching_tests() {
-            assert_eq!(set(qf.iter_matching_no_build(pattern)), set(expected));
+            assert_eq!(
+                set(qf.iter_matching_no_build(pattern)),
+                set(expected),
+                "for pattern {:?}",
+                pattern
+            );
         }
         assert!(qf.trees[0].get().is_none());
         qf.ensure_tree0();
         assert!(qf.trees[0].get().is_some());
         for (pattern, expected) in iter_matching_tests() {
-            assert_eq!(set(qf.iter_matching_no_build(pattern)), set(expected));
+            assert_eq!(
+                set(qf.iter_matching_no_build(pattern)),
+                set(expected),
+                "for pattern {:?}",
+                pattern
+            );
         }
         assert!(qf.trees[4].get().is_none());
         for (pattern, expected) in iter_matching_tests() {
-            assert_eq!(set(qf.iter_matching(pattern)), set(expected));
+            assert_eq!(
+                set(qf.iter_matching(pattern)),
+                set(expected),
+                "for pattern {:?}",
+                pattern
+            );
         }
         assert!(qf.trees[4].get().is_some());
     }
@@ -629,10 +862,49 @@ mod test {
         for (pattern, expected) in iter_matching_tests() {
             assert_eq!(
                 set(qf.iter_matching_no_build(pattern)),
-                set(expected.clone())
+                set(expected.clone()),
+                "for pattern {:?}",
+                pattern
             );
             assert_eq!(set(qf.iter_matching(pattern)), set(expected));
         }
+    }
+
+    #[test]
+    fn iter_matching_lazy_runtime_forest() {
+        use Order::*;
+        let mut qf = QuadForest::<LazyRt>::new_param(GSPO, SPOG, PGSO, OPSG, SOGP, GOPS);
+        populate(&mut qf);
+        for (pattern, expected) in iter_matching_tests() {
+            dbg!(pattern);
+            assert_eq!(
+                set(qf.iter_matching_no_build(pattern)),
+                set(expected),
+                "for pattern {:?}",
+                pattern
+            );
+        }
+        assert!(qf.trees[0].get().is_none());
+        qf.ensure_tree0();
+        assert!(qf.trees[0].get().is_some());
+        for (pattern, expected) in iter_matching_tests() {
+            assert_eq!(
+                set(qf.iter_matching_no_build(pattern)),
+                set(expected),
+                "for pattern {:?}",
+                pattern
+            );
+        }
+        assert!(qf.trees[4].get().is_none());
+        for (pattern, expected) in iter_matching_tests() {
+            assert_eq!(
+                set(qf.iter_matching(pattern)),
+                set(expected),
+                "for pattern {:?}",
+                pattern
+            );
+        }
+        assert!(qf.trees[4].get().is_some());
     }
 
     fn iter_matching_tests() -> impl Iterator<Item = ([Option<usize>; 4], Vec<[usize; 4]>)> {

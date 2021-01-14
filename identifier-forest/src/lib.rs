@@ -25,6 +25,9 @@ pub mod quad {
     pub mod block;
     pub use self::block::*;
 
+    pub mod rt_block;
+    pub use self::rt_block::*;
+
     mod quad_forest;
     pub use self::quad_forest::*;
 }

@@ -6,17 +6,11 @@ use std::hash::Hash;
 use std::ops::{Deref, DerefMut, RangeInclusive};
 
 /// A wrapper around `[I; 4]` providing its own sorting order.
-///
-/// # Contract
-///
-/// Implementations of this trait MUST provide zero-cost conversion to and from `[I; 4]`,
-/// via [`From`] and [`Into`].
 pub trait Block<I: Identifier>:
     Clone
     + Copy
     + Debug
     + Eq
-    + From<[I; 4]>
     + Into<[I; 4]>
     + Hash
     + Ord
@@ -25,8 +19,28 @@ pub trait Block<I: Identifier>:
     + Deref<Target = [I; 4]>
     + DerefMut
 {
-    /// From most significant to least significant, the index of a SPOG pattern considered by this [`Block`]'s order.
-    const IDX: [usize; 4];
+    /// Parameter type
+    ///
+    /// This type can be used to fine-tune the behaviour or some implementations,
+    /// for example decide on the sorting order at runtime for [`RtBlock`](super::RtBlock).
+    ///
+    type Param: Copy + Clone + Default;
+
+    /// Build a new block from the given data and parameter
+    fn new(data: [I; 4], param: Self::Param) -> Self;
+
+    /// Return the number of initial `Some`s in the given pattern,
+    /// in the order specified for this [`Block`] type.
+    fn priority_for(spog_pattern: &[Option<I>; 4], param: Self::Param) -> u8;
+
+    /// Return, for the given pattern:
+    /// * the most specific range (according to the order of this [`Block`])
+    ///   containing all matching quads, and
+    /// * the simplest pattern required to filter spurious quads from this range.
+    fn range_and_filter(
+        spog_pattern: [Option<I>; 4],
+        param: Self::Param,
+    ) -> (RangeInclusive<Self>, [Option<I>; 4]);
 
     /// Return true if this block matches the given pattern.
     ///
@@ -40,46 +54,9 @@ pub trait Block<I: Identifier>:
             })
     }
 
-    /// Return the number of initial `Some`s in the given pattern,
-    /// in the order specified for this [`Block`] type.
-    fn priority_for(spog_pattern: &[Option<I>; 4]) -> u8 {
-        let mut ret = 0;
-        for i in Self::IDX.iter() {
-            match spog_pattern[*i] {
-                Some(_) => ret += 1,
-                None => break,
-            }
-        }
-        ret
-    }
-
-    /// Return, for the given pattern:
-    /// * the most specific range (according to the order of this [`Block`])
-    ///   containing all matching quads, and
-    /// * the simplest pattern required to filter spurious quads from this range.
-    fn range_and_filter(
-        mut spog_pattern: [Option<I>; 4],
-    ) -> (RangeInclusive<Self>, [Option<I>; 4]) {
-        let mut bmin = Self::from([I::MIN; 4]);
-        let mut bmax = Self::from([I::MAX; 4]);
-        for i in Self::IDX.iter() {
-            let i = *i;
-            match spog_pattern[i] {
-                None => break,
-                Some(val) => {
-                    bmin[i] = val;
-                    bmax[i] = val;
-                    spog_pattern[i] = None;
-                }
-            }
-        }
-        (bmin..=bmax, spog_pattern)
-    }
-
-    /// Zero-cost conversion from one type of [`Block`] to another.
-    fn convert<B: Block<I>>(self) -> B {
-        let a: [I; 4] = self.into();
-        a.into()
+    /// Convert into another block type, using the given parameter.
+    fn convert_with<B2: Block<I>>(self, param: B2::Param) -> B2 {
+        B2::new(self.into(), param)
     }
 }
 
@@ -134,7 +111,42 @@ macro_rules! make_block_impl {
             }
 
             impl<I: Identifier> Block<I> for $typ<I> {
-                const IDX: [usize; 4] = [$i0, $i1, $i2, $i3];
+                type Param = ();
+
+                fn new(data: [I; 4], _param: ()) -> Self {
+                    data.into()
+                }
+
+                fn priority_for(spog_pattern: &[Option<I>; 4], _param: ()) -> u8 {
+                    let mut ret = 0;
+                    for i in [$i0, $i1, $i2, $i3].iter() {
+                        match spog_pattern[*i] {
+                            Some(_) => ret += 1,
+                            None => break,
+                        }
+                    }
+                    ret
+                }
+
+                fn range_and_filter(
+                    mut spog_pattern: [Option<I>; 4],
+                    _param: (),
+                ) -> (RangeInclusive<Self>, [Option<I>; 4]) {
+                    let mut bmin = Self::from([I::MIN; 4]);
+                    let mut bmax = Self::from([I::MAX; 4]);
+                    for i in [$i0, $i1, $i2, $i3].iter() {
+                        let i = *i;
+                        match spog_pattern[i] {
+                            None => break,
+                            Some(val) => {
+                                bmin[i] = val;
+                                bmax[i] = val;
+                                spog_pattern[i] = None;
+                            }
+                        }
+                    }
+                    (bmin..=bmax, spog_pattern)
+                }
             }
 
             #[cfg(test)]
@@ -151,6 +163,17 @@ macro_rules! make_block_impl {
         }
         pub use self::$mod::$typ;
     };
+}
+
+/// Extension trait to add a method for `[I; 4]`, where `I` implements [`Identifier`].
+pub trait IntoBlock<I: Identifier, B: Block<I>> {
+    /// Convert this array into a [`Block`] using the given parameter
+    fn into_block(self, param: B::Param) -> B;
+}
+impl<I: Identifier, B: Block<I>> IntoBlock<I, B> for [I; 4] {
+    fn into_block(self, param: B::Param) -> B {
+        B::new(self, param)
+    }
 }
 
 make_block_impl!(SPOG, 0, 1, 2, 3, spog);
@@ -183,22 +206,22 @@ mod test {
 
     #[test]
     fn spog_priority() {
-        assert_eq!(SPOG::priority_for(&p(0, 0, 0, 0)), 0);
-        assert_eq!(SPOG::priority_for(&p(1, 0, 0, 0)), 1);
-        assert_eq!(SPOG::priority_for(&p(0, 1, 0, 0)), 0);
-        assert_eq!(SPOG::priority_for(&p(0, 0, 1, 0)), 0);
-        assert_eq!(SPOG::priority_for(&p(0, 0, 0, 1)), 0);
-        assert_eq!(SPOG::priority_for(&p(1, 1, 0, 0)), 2);
-        assert_eq!(SPOG::priority_for(&p(0, 1, 1, 0)), 0);
-        assert_eq!(SPOG::priority_for(&p(0, 0, 1, 1)), 0);
-        assert_eq!(SPOG::priority_for(&p(1, 1, 0, 1)), 2);
-        assert_eq!(SPOG::priority_for(&p(1, 1, 1, 0)), 3);
-        assert_eq!(SPOG::priority_for(&p(1, 1, 1, 1)), 4);
+        assert_eq!(SPOG::priority_for(&p(0, 0, 0, 0), ()), 0);
+        assert_eq!(SPOG::priority_for(&p(1, 0, 0, 0), ()), 1);
+        assert_eq!(SPOG::priority_for(&p(0, 1, 0, 0), ()), 0);
+        assert_eq!(SPOG::priority_for(&p(0, 0, 1, 0), ()), 0);
+        assert_eq!(SPOG::priority_for(&p(0, 0, 0, 1), ()), 0);
+        assert_eq!(SPOG::priority_for(&p(1, 1, 0, 0), ()), 2);
+        assert_eq!(SPOG::priority_for(&p(0, 1, 1, 0), ()), 0);
+        assert_eq!(SPOG::priority_for(&p(0, 0, 1, 1), ()), 0);
+        assert_eq!(SPOG::priority_for(&p(1, 1, 0, 1), ()), 2);
+        assert_eq!(SPOG::priority_for(&p(1, 1, 1, 0), ()), 3);
+        assert_eq!(SPOG::priority_for(&p(1, 1, 1, 1), ()), 4);
     }
 
     #[test]
     fn spog_range_and_filter() {
-        let rf = SPOG::range_and_filter;
+        let rf = |p| SPOG::range_and_filter(p, ());
         assert_eq!(
             rf(p(0, 0, 0, 0)),
             (b(0, 0, 0, 0)..=b(9, 9, 9, 9), p(0, 0, 0, 0))
@@ -256,22 +279,22 @@ mod test {
 
     #[test]
     fn gspo_priority() {
-        assert_eq!(GSPO::priority_for(&p(0, 0, 0, 0)), 0);
-        assert_eq!(GSPO::priority_for(&p(1, 0, 0, 0)), 0);
-        assert_eq!(GSPO::priority_for(&p(0, 1, 0, 0)), 0);
-        assert_eq!(GSPO::priority_for(&p(0, 0, 1, 0)), 0);
-        assert_eq!(GSPO::priority_for(&p(0, 0, 0, 1)), 1);
-        assert_eq!(GSPO::priority_for(&p(1, 1, 0, 0)), 0);
-        assert_eq!(GSPO::priority_for(&p(0, 1, 1, 0)), 0);
-        assert_eq!(GSPO::priority_for(&p(0, 0, 1, 1)), 1);
-        assert_eq!(GSPO::priority_for(&p(1, 0, 1, 1)), 2);
-        assert_eq!(GSPO::priority_for(&p(1, 1, 0, 1)), 3);
-        assert_eq!(GSPO::priority_for(&p(1, 1, 1, 1)), 4);
+        assert_eq!(GSPO::priority_for(&p(0, 0, 0, 0), ()), 0);
+        assert_eq!(GSPO::priority_for(&p(1, 0, 0, 0), ()), 0);
+        assert_eq!(GSPO::priority_for(&p(0, 1, 0, 0), ()), 0);
+        assert_eq!(GSPO::priority_for(&p(0, 0, 1, 0), ()), 0);
+        assert_eq!(GSPO::priority_for(&p(0, 0, 0, 1), ()), 1);
+        assert_eq!(GSPO::priority_for(&p(1, 1, 0, 0), ()), 0);
+        assert_eq!(GSPO::priority_for(&p(0, 1, 1, 0), ()), 0);
+        assert_eq!(GSPO::priority_for(&p(0, 0, 1, 1), ()), 1);
+        assert_eq!(GSPO::priority_for(&p(1, 0, 1, 1), ()), 2);
+        assert_eq!(GSPO::priority_for(&p(1, 1, 0, 1), ()), 3);
+        assert_eq!(GSPO::priority_for(&p(1, 1, 1, 1), ()), 4);
     }
 
     #[test]
     fn gspo_range_and_filter() {
-        let rf = GSPO::range_and_filter;
+        let rf = |p| GSPO::range_and_filter(p, ());
         assert_eq!(
             rf(p(0, 0, 0, 0)),
             (b(0, 0, 0, 0)..=b(9, 9, 9, 9), p(0, 0, 0, 0))
@@ -329,22 +352,22 @@ mod test {
 
     #[test]
     fn opsg_priority() {
-        assert_eq!(OPSG::priority_for(&p(0, 0, 0, 0)), 0);
-        assert_eq!(OPSG::priority_for(&p(1, 0, 0, 0)), 0);
-        assert_eq!(OPSG::priority_for(&p(0, 1, 0, 0)), 0);
-        assert_eq!(OPSG::priority_for(&p(0, 0, 1, 0)), 1);
-        assert_eq!(OPSG::priority_for(&p(0, 0, 0, 1)), 0);
-        assert_eq!(OPSG::priority_for(&p(1, 1, 0, 0)), 0);
-        assert_eq!(OPSG::priority_for(&p(0, 1, 1, 0)), 2);
-        assert_eq!(OPSG::priority_for(&p(0, 0, 1, 1)), 1);
-        assert_eq!(OPSG::priority_for(&p(0, 1, 1, 1)), 2);
-        assert_eq!(OPSG::priority_for(&p(1, 1, 1, 0)), 3);
-        assert_eq!(OPSG::priority_for(&p(1, 1, 1, 1)), 4);
+        assert_eq!(OPSG::priority_for(&p(0, 0, 0, 0), ()), 0);
+        assert_eq!(OPSG::priority_for(&p(1, 0, 0, 0), ()), 0);
+        assert_eq!(OPSG::priority_for(&p(0, 1, 0, 0), ()), 0);
+        assert_eq!(OPSG::priority_for(&p(0, 0, 1, 0), ()), 1);
+        assert_eq!(OPSG::priority_for(&p(0, 0, 0, 1), ()), 0);
+        assert_eq!(OPSG::priority_for(&p(1, 1, 0, 0), ()), 0);
+        assert_eq!(OPSG::priority_for(&p(0, 1, 1, 0), ()), 2);
+        assert_eq!(OPSG::priority_for(&p(0, 0, 1, 1), ()), 1);
+        assert_eq!(OPSG::priority_for(&p(0, 1, 1, 1), ()), 2);
+        assert_eq!(OPSG::priority_for(&p(1, 1, 1, 0), ()), 3);
+        assert_eq!(OPSG::priority_for(&p(1, 1, 1, 1), ()), 4);
     }
 
     #[test]
     fn opsg_range_and_filter() {
-        let rf = OPSG::range_and_filter;
+        let rf = |p| OPSG::range_and_filter(p, ());
         assert_eq!(
             rf(p(0, 0, 0, 0)),
             (b(0, 0, 0, 0)..=b(9, 9, 9, 9), p(0, 0, 0, 0))
@@ -402,22 +425,22 @@ mod test {
 
     #[test]
     fn pgso_priority() {
-        assert_eq!(PGSO::priority_for(&p(0, 0, 0, 0)), 0);
-        assert_eq!(PGSO::priority_for(&p(1, 0, 0, 0)), 0);
-        assert_eq!(PGSO::priority_for(&p(0, 1, 0, 0)), 1);
-        assert_eq!(PGSO::priority_for(&p(0, 0, 1, 0)), 0);
-        assert_eq!(PGSO::priority_for(&p(0, 0, 0, 1)), 0);
-        assert_eq!(PGSO::priority_for(&p(1, 1, 0, 0)), 1);
-        assert_eq!(PGSO::priority_for(&p(0, 1, 1, 0)), 1);
-        assert_eq!(PGSO::priority_for(&p(0, 0, 1, 1)), 0);
-        assert_eq!(PGSO::priority_for(&p(0, 1, 1, 1)), 2);
-        assert_eq!(PGSO::priority_for(&p(1, 1, 0, 1)), 3);
-        assert_eq!(PGSO::priority_for(&p(1, 1, 1, 1)), 4);
+        assert_eq!(PGSO::priority_for(&p(0, 0, 0, 0), ()), 0);
+        assert_eq!(PGSO::priority_for(&p(1, 0, 0, 0), ()), 0);
+        assert_eq!(PGSO::priority_for(&p(0, 1, 0, 0), ()), 1);
+        assert_eq!(PGSO::priority_for(&p(0, 0, 1, 0), ()), 0);
+        assert_eq!(PGSO::priority_for(&p(0, 0, 0, 1), ()), 0);
+        assert_eq!(PGSO::priority_for(&p(1, 1, 0, 0), ()), 1);
+        assert_eq!(PGSO::priority_for(&p(0, 1, 1, 0), ()), 1);
+        assert_eq!(PGSO::priority_for(&p(0, 0, 1, 1), ()), 0);
+        assert_eq!(PGSO::priority_for(&p(0, 1, 1, 1), ()), 2);
+        assert_eq!(PGSO::priority_for(&p(1, 1, 0, 1), ()), 3);
+        assert_eq!(PGSO::priority_for(&p(1, 1, 1, 1), ()), 4);
     }
 
     #[test]
     fn pgso_range_and_filter() {
-        let rf = PGSO::range_and_filter;
+        let rf = |p| PGSO::range_and_filter(p, ());
         assert_eq!(
             rf(p(0, 0, 0, 0)),
             (b(0, 0, 0, 0)..=b(9, 9, 9, 9), p(0, 0, 0, 0))
@@ -475,22 +498,22 @@ mod test {
 
     #[test]
     fn gops_priority() {
-        assert_eq!(GOPS::priority_for(&p(0, 0, 0, 0)), 0);
-        assert_eq!(GOPS::priority_for(&p(1, 0, 0, 0)), 0);
-        assert_eq!(GOPS::priority_for(&p(0, 1, 0, 0)), 0);
-        assert_eq!(GOPS::priority_for(&p(0, 0, 1, 0)), 0);
-        assert_eq!(GOPS::priority_for(&p(0, 0, 0, 1)), 1);
-        assert_eq!(GOPS::priority_for(&p(1, 1, 0, 0)), 0);
-        assert_eq!(GOPS::priority_for(&p(0, 1, 1, 0)), 0);
-        assert_eq!(GOPS::priority_for(&p(0, 0, 1, 1)), 2);
-        assert_eq!(GOPS::priority_for(&p(1, 0, 1, 1)), 2);
-        assert_eq!(GOPS::priority_for(&p(0, 1, 1, 1)), 3);
-        assert_eq!(GOPS::priority_for(&p(1, 1, 1, 1)), 4);
+        assert_eq!(GOPS::priority_for(&p(0, 0, 0, 0), ()), 0);
+        assert_eq!(GOPS::priority_for(&p(1, 0, 0, 0), ()), 0);
+        assert_eq!(GOPS::priority_for(&p(0, 1, 0, 0), ()), 0);
+        assert_eq!(GOPS::priority_for(&p(0, 0, 1, 0), ()), 0);
+        assert_eq!(GOPS::priority_for(&p(0, 0, 0, 1), ()), 1);
+        assert_eq!(GOPS::priority_for(&p(1, 1, 0, 0), ()), 0);
+        assert_eq!(GOPS::priority_for(&p(0, 1, 1, 0), ()), 0);
+        assert_eq!(GOPS::priority_for(&p(0, 0, 1, 1), ()), 2);
+        assert_eq!(GOPS::priority_for(&p(1, 0, 1, 1), ()), 2);
+        assert_eq!(GOPS::priority_for(&p(0, 1, 1, 1), ()), 3);
+        assert_eq!(GOPS::priority_for(&p(1, 1, 1, 1), ()), 4);
     }
 
     #[test]
     fn gops_range_and_filter() {
-        let rf = GOPS::range_and_filter;
+        let rf = |p| GOPS::range_and_filter(p, ());
         assert_eq!(
             rf(p(0, 0, 0, 0)),
             (b(0, 0, 0, 0)..=b(9, 9, 9, 9), p(0, 0, 0, 0))
@@ -548,22 +571,22 @@ mod test {
 
     #[test]
     fn sogp_priority() {
-        assert_eq!(SOGP::priority_for(&p(0, 0, 0, 0)), 0);
-        assert_eq!(SOGP::priority_for(&p(1, 0, 0, 0)), 1);
-        assert_eq!(SOGP::priority_for(&p(0, 1, 0, 0)), 0);
-        assert_eq!(SOGP::priority_for(&p(0, 0, 1, 0)), 0);
-        assert_eq!(SOGP::priority_for(&p(0, 0, 0, 1)), 0);
-        assert_eq!(SOGP::priority_for(&p(1, 1, 0, 0)), 1);
-        assert_eq!(SOGP::priority_for(&p(0, 1, 1, 0)), 0);
-        assert_eq!(SOGP::priority_for(&p(0, 0, 1, 1)), 0);
-        assert_eq!(SOGP::priority_for(&p(1, 1, 1, 0)), 2);
-        assert_eq!(SOGP::priority_for(&p(1, 0, 1, 1)), 3);
-        assert_eq!(SOGP::priority_for(&p(1, 1, 1, 1)), 4);
+        assert_eq!(SOGP::priority_for(&p(0, 0, 0, 0), ()), 0);
+        assert_eq!(SOGP::priority_for(&p(1, 0, 0, 0), ()), 1);
+        assert_eq!(SOGP::priority_for(&p(0, 1, 0, 0), ()), 0);
+        assert_eq!(SOGP::priority_for(&p(0, 0, 1, 0), ()), 0);
+        assert_eq!(SOGP::priority_for(&p(0, 0, 0, 1), ()), 0);
+        assert_eq!(SOGP::priority_for(&p(1, 1, 0, 0), ()), 1);
+        assert_eq!(SOGP::priority_for(&p(0, 1, 1, 0), ()), 0);
+        assert_eq!(SOGP::priority_for(&p(0, 0, 1, 1), ()), 0);
+        assert_eq!(SOGP::priority_for(&p(1, 1, 1, 0), ()), 2);
+        assert_eq!(SOGP::priority_for(&p(1, 0, 1, 1), ()), 3);
+        assert_eq!(SOGP::priority_for(&p(1, 1, 1, 1), ()), 4);
     }
 
     #[test]
     fn sogp_range_and_filter() {
-        let rf = SOGP::range_and_filter;
+        let rf = |p| SOGP::range_and_filter(p, ());
         assert_eq!(
             rf(p(0, 0, 0, 0)),
             (b(0, 0, 0, 0)..=b(9, 9, 9, 9), p(0, 0, 0, 0))
@@ -612,7 +635,7 @@ mod test {
 
     /// Block constructor, where 9 is interpreted as usize::MAX
     fn b<B: Block<usize>>(s: usize, p: usize, o: usize, g: usize) -> B {
-        [max9(s), max9(p), max9(o), max9(g)].into()
+        [max9(s), max9(p), max9(o), max9(g)].into_block(B::Param::default())
     }
 
     /// Pattern constructor, where
