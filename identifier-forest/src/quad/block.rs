@@ -3,21 +3,11 @@ use crate::Identifier;
 use std::cmp::Ordering;
 use std::fmt::Debug;
 use std::hash::Hash;
-use std::ops::{Deref, DerefMut, RangeInclusive};
+use std::ops::RangeInclusive;
 
 /// A wrapper around `[I; 4]` providing its own sorting order.
 pub trait Block<I: Identifier>:
-    Clone
-    + Copy
-    + Debug
-    + Eq
-    + Into<[I; 4]>
-    + Hash
-    + Ord
-    + PartialEq
-    + PartialOrd
-    + Deref<Target = [I; 4]>
-    + DerefMut
+    Clone + Copy + Debug + Eq + Hash + Ord + PartialEq + PartialOrd
 {
     /// Parameter type
     ///
@@ -28,6 +18,9 @@ pub trait Block<I: Identifier>:
 
     /// Build a new block from the given data and parameter
     fn new(data: [I; 4], param: Self::Param) -> Self;
+
+    /// Get a copy of the content of this block, in SPOG order.
+    fn spog(&self, param: Self::Param) -> [I; 4];
 
     /// Return the number of initial `Some`s in the given pattern,
     /// in the order specified for this [`Block`] type.
@@ -45,18 +38,14 @@ pub trait Block<I: Identifier>:
     /// Return true if this block matches the given pattern.
     ///
     /// See [`iter_matching`](super::QuadForest::iter_matching)
-    fn matches(&self, spog_pattern: &[Option<I>; 4]) -> bool {
-        self.iter()
+    fn matches(&self, spog_pattern: &[Option<I>; 4], param: Self::Param) -> bool {
+        self.spog(param)
+            .iter()
             .zip(spog_pattern.iter())
             .all(|(val, opt)| match opt {
                 None => true,
                 Some(other) => val == other,
             })
-    }
-
-    /// Convert into another block type, using the given parameter.
-    fn convert_with<B2: Block<I>>(self, param: B2::Param) -> B2 {
-        B2::new(self.into(), param)
     }
 }
 
@@ -69,38 +58,13 @@ macro_rules! make_block_impl {
             #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
             pub struct $typ<I = usize>(pub [I; 4]);
 
-            impl<I: Identifier> Deref for $typ<I> {
-                type Target = [I; 4];
-                fn deref(&self) -> &Self::Target {
-                    &self.0
-                }
-            }
-
-            impl<I: Identifier> DerefMut for $typ<I> {
-                fn deref_mut(&mut self) -> &mut Self::Target {
-                    &mut self.0
-                }
-            }
-
-            impl<I: Identifier> From<[I; 4]> for $typ<I> {
-                fn from(other: [I; 4]) -> Self {
-                    $typ(other)
-                }
-            }
-
-            impl<I: Identifier> From<$typ<I>> for [I; 4] {
-                fn from(other: $typ<I>) -> Self {
-                    other.0
-                }
-            }
-
             impl<I: Identifier> Ord for $typ<I> {
                 fn cmp(&self, other: &Self) -> Ordering {
-                    self[$i0]
-                        .cmp(&other[$i0])
-                        .then_with(|| self[$i1].cmp(&other[$i1]))
-                        .then_with(|| self[$i2].cmp(&other[$i2]))
-                        .then_with(|| self[$i3].cmp(&other[$i3]))
+                    self.0[$i0]
+                        .cmp(&other.0[$i0])
+                        .then_with(|| self.0[$i1].cmp(&other.0[$i1]))
+                        .then_with(|| self.0[$i2].cmp(&other.0[$i2]))
+                        .then_with(|| self.0[$i3].cmp(&other.0[$i3]))
                 }
             }
 
@@ -114,7 +78,11 @@ macro_rules! make_block_impl {
                 type Param = ();
 
                 fn new(data: [I; 4], _param: ()) -> Self {
-                    data.into()
+                    $typ(data)
+                }
+
+                fn spog(&self, _param: ()) -> [I; 4] {
+                    self.0
                 }
 
                 fn priority_for(spog_pattern: &[Option<I>; 4], _param: ()) -> u8 {
@@ -132,15 +100,14 @@ macro_rules! make_block_impl {
                     mut spog_pattern: [Option<I>; 4],
                     _param: (),
                 ) -> (RangeInclusive<Self>, [Option<I>; 4]) {
-                    let mut bmin = Self::from([I::MIN; 4]);
-                    let mut bmax = Self::from([I::MAX; 4]);
-                    for i in [$i0, $i1, $i2, $i3].iter() {
-                        let i = *i;
+                    let mut bmin = Self::new([I::MIN; 4], ());
+                    let mut bmax = Self::new([I::MAX; 4], ());
+                    for i in [$i0, $i1, $i2, $i3].iter().copied() {
                         match spog_pattern[i] {
                             None => break,
                             Some(val) => {
-                                bmin[i] = val;
-                                bmax[i] = val;
+                                bmin.0[i] = val;
+                                bmax.0[i] = val;
                                 spog_pattern[i] = None;
                             }
                         }

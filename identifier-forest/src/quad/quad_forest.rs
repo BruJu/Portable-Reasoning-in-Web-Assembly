@@ -274,7 +274,10 @@ impl<P: QuadForestProfile> QuadForest<P> {
     /// Iter over all the quads stored in this [`QuadForest`],
     /// using the default tree (see [`QuadForestProfile::OrderDflt`]).
     pub fn iter(&self) -> impl Iterator<Item = [P::Identifier; 4]> + '_ {
-        self.default_tree.iter().copied().map(P::OrderDflt::into)
+        self.default_tree
+            .iter()
+            .copied()
+            .map(move |blk| blk.spog(self.param_default))
     }
 
     /// Iter over all the quads matching the given pattern,
@@ -285,7 +288,7 @@ impl<P: QuadForestProfile> QuadForest<P> {
         &self,
         spog_pattern: [Option<P::Identifier>; 4],
     ) -> Box<dyn Iterator<Item = [P::Identifier; 4]> + '_> {
-        match dbg!(self.best_tree_no_build(&spog_pattern)) {
+        match self.best_tree_no_build(&spog_pattern) {
             -1 => iter_matching(&self.default_tree, spog_pattern, self.param_default),
             0 => iter_matching(self.get_tree0().unwrap(), spog_pattern, self.params.0),
             1 => iter_matching(self.get_tree1().unwrap(), spog_pattern, self.params.1),
@@ -311,7 +314,7 @@ impl<P: QuadForestProfile> QuadForest<P> {
         &self,
         spog_pattern: [Option<P::Identifier>; 4],
     ) -> Box<dyn Iterator<Item = [P::Identifier; 4]> + '_> {
-        match dbg!(self.best_tree(&spog_pattern)) {
+        match self.best_tree(&spog_pattern) {
             -1 => iter_matching(&self.default_tree, spog_pattern, self.param_default),
             0 => iter_matching(self.ensure_tree0(), spog_pattern, self.params.0),
             1 => iter_matching(self.ensure_tree1(), spog_pattern, self.params.1),
@@ -447,7 +450,7 @@ impl<P: QuadForestProfile> QuadForest<P> {
             let tree: BTreeSet<P::Order0> = self
                 .default_tree
                 .iter()
-                .map(|blk| blk.convert_with(self.params.0))
+                .map(|blk| blk.spog(self.param_default).into_block(self.params.0))
                 .collect();
             unsafe { transmute(tree) }
         });
@@ -459,7 +462,7 @@ impl<P: QuadForestProfile> QuadForest<P> {
             let tree: BTreeSet<P::Order1> = self
                 .default_tree
                 .iter()
-                .map(|blk| blk.convert_with(self.params.1))
+                .map(|blk| blk.spog(self.param_default).into_block(self.params.1))
                 .collect();
             unsafe { transmute(tree) }
         });
@@ -471,7 +474,7 @@ impl<P: QuadForestProfile> QuadForest<P> {
             let tree: BTreeSet<P::Order2> = self
                 .default_tree
                 .iter()
-                .map(|blk| blk.convert_with(self.params.2))
+                .map(|blk| blk.spog(self.param_default).into_block(self.params.2))
                 .collect();
             unsafe { transmute(tree) }
         });
@@ -483,7 +486,7 @@ impl<P: QuadForestProfile> QuadForest<P> {
             let tree: BTreeSet<P::Order3> = self
                 .default_tree
                 .iter()
-                .map(|blk| blk.convert_with(self.params.3))
+                .map(|blk| blk.spog(self.param_default).into_block(self.params.3))
                 .collect();
             unsafe { transmute(tree) }
         });
@@ -495,7 +498,7 @@ impl<P: QuadForestProfile> QuadForest<P> {
             let tree: BTreeSet<P::Order4> = self
                 .default_tree
                 .iter()
-                .map(|blk| blk.convert_with(self.params.4))
+                .map(|blk| blk.spog(self.param_default).into_block(self.params.4))
                 .collect();
             unsafe { transmute(tree) }
         });
@@ -641,12 +644,16 @@ fn iter_matching<B: Block<I>, I: Identifier>(
     spog_pattern: [Option<I>; 4],
     param: B::Param,
 ) -> Box<dyn Iterator<Item = [I; 4]> + '_> {
-    let (range, filter) = dbg!(B::range_and_filter(spog_pattern, param));
+    let (range, filter) = B::range_and_filter(spog_pattern, param);
     let ranged = tree.range(range).copied();
     if filter[..] == [None, None, None, None] {
-        Box::new(ranged.map(B::into))
+        Box::new(ranged.map(move |blk| blk.spog(param)))
     } else {
-        Box::new(ranged.filter(move |blk| blk.matches(&filter)).map(B::into))
+        Box::new(
+            ranged
+                .filter(move |blk| blk.matches(&filter, param))
+                .map(move |blk| blk.spog(param)),
+        )
     }
 }
 
@@ -876,7 +883,6 @@ mod test {
         let mut qf = QuadForest::<LazyRt>::new_param(GSPO, SPOG, PGSO, OPSG, SOGP, GOPS);
         populate(&mut qf);
         for (pattern, expected) in iter_matching_tests() {
-            dbg!(pattern);
             assert_eq!(
                 set(qf.iter_matching_no_build(pattern)),
                 set(expected),
