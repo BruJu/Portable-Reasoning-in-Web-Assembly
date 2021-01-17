@@ -12,7 +12,8 @@ pub trait Block<I: Identifier>:
     /// Parameter type
     ///
     /// This type can be used to fine-tune the behaviour or some implementations,
-    /// for example decide on the sorting order at runtime for [`RtBlock`](super::RtBlock).
+    /// for example decide on the sorting order at runtime for
+    /// [`RtfBlock`](super::RtfBlock) and [`RtsBlock`](super::RtsBlock).
     ///
     type Param: Copy + Clone + Default;
 

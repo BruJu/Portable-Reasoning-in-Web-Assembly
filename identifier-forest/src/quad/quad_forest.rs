@@ -112,38 +112,34 @@ impl<I: Identifier> QuadForestProfile for SPOGLight<I> {
     const PREBUILT: usize = 0;
 }
 
-/// A [`QuadForestProfile`] using runtime-defined orders,
+/// A [`QuadForestProfile`] using [runtime-fat-blocks][`RtsBlock`],
 /// and building up to 5 additional trees lazily.
-///
-/// In order to limit the number of indexes,
-/// set the param of some additional tree to the same [`Order`](super::rt_block::Order)
-/// as the default tree.
-pub struct LazyRt<I = usize>(PhantomData<I>);
-impl<I: Identifier> QuadForestProfile for LazyRt<I> {
+pub struct RuntimeFat<I = usize>(PhantomData<I>);
+impl<I: Identifier> QuadForestProfile for RuntimeFat<I> {
     type Identifier = I;
-    type OrderDflt = RtBlock<I>;
-    type Order0 = RtBlock<I>;
-    type Order1 = RtBlock<I>;
-    type Order2 = RtBlock<I>;
-    type Order3 = RtBlock<I>;
-    type Order4 = RtBlock<I>;
+    type OrderDflt = RtfBlock<I>;
+    type Order0 = RtfBlock<I>;
+    type Order1 = RtfBlock<I>;
+    type Order2 = RtfBlock<I>;
+    type Order3 = RtfBlock<I>;
+    type Order4 = RtfBlock<I>;
     const USED: usize = 5;
     const PREBUILT: usize = 0;
 }
 
-/// A [`QuadForestProfile`] using runtime-defined orders,
-/// and building 5 additional trees from the start.
-pub struct GreedyRt<I = usize>(PhantomData<I>);
-impl<I: Identifier> QuadForestProfile for GreedyRt<I> {
+/// A [`QuadForestProfile`] using [runtime-slim-blocks][`RtfBlock`],
+/// and building up to 5 additional trees lazily.
+pub struct RuntimeSlim<I = usize>(PhantomData<I>);
+impl<I: Identifier> QuadForestProfile for RuntimeSlim<I> {
     type Identifier = I;
-    type OrderDflt = RtBlock<I>;
-    type Order0 = RtBlock<I>;
-    type Order1 = RtBlock<I>;
-    type Order2 = RtBlock<I>;
-    type Order3 = RtBlock<I>;
-    type Order4 = RtBlock<I>;
+    type OrderDflt = RtsBlock<I>;
+    type Order0 = RtsBlock<I>;
+    type Order1 = RtsBlock<I>;
+    type Order2 = RtsBlock<I>;
+    type Order3 = RtsBlock<I>;
+    type Order4 = RtsBlock<I>;
     const USED: usize = 5;
-    const PREBUILT: usize = 5;
+    const PREBUILT: usize = 0;
 }
 
 /// A [`QuadForest`] stores [`Identifier`] quads in up to 6 trees,
@@ -253,6 +249,78 @@ impl<P: QuadForestProfile> QuadForest<P> {
             param_default,
             params: (param0, param1, param2, param3, param4),
         }
+    }
+
+    /// Helper constructor for "runtime" blocks
+    pub fn new_rt(pre_built: &[Order], lazy: &[Order]) -> Self
+    where
+        P::OrderDflt: Block<P::Identifier, Param = Order>,
+        P::Order0: Block<P::Identifier, Param = Order>,
+        P::Order1: Block<P::Identifier, Param = Order>,
+        P::Order2: Block<P::Identifier, Param = Order>,
+        P::Order3: Block<P::Identifier, Param = Order>,
+        P::Order4: Block<P::Identifier, Param = Order>,
+    {
+        {
+            assert!(
+                !pre_built.is_empty(),
+                "At least one pre_built order must be given"
+            );
+            assert!(
+                pre_built.len() + lazy.len() <= 6,
+                "At most 6 orders can be given"
+            );
+            for (i, o) in pre_built.iter().enumerate() {
+                assert!(
+                    pre_built[i + 1..].iter().find(|o2| *o2 == o).is_none(),
+                    "Duplicate order {:?}",
+                    o
+                );
+                assert!(
+                    lazy.iter().find(|o2| *o2 == o).is_none(),
+                    "Duplicate order {:?}",
+                    o
+                );
+            }
+            for (i, o) in lazy.iter().enumerate() {
+                assert!(
+                    lazy[i + 1..].iter().find(|o2| *o2 == o).is_none(),
+                    "Duplicate order {:?}",
+                    o
+                );
+            }
+        }
+        let default_param = pre_built[0];
+        let mut params = Vec::with_capacity(5);
+        params.extend(pre_built[1..].iter().copied());
+        params.extend(lazy.iter().copied());
+        for _ in 0..(6 - params.len()) {
+            params.push(default_param);
+        }
+        let this = Self::new_param(
+            default_param,
+            params[0],
+            params[1],
+            params[2],
+            params[3],
+            params[4],
+        );
+        if pre_built.len() > 1 {
+            this.ensure_tree0();
+        }
+        if pre_built.len() > 2 {
+            this.ensure_tree1();
+        }
+        if pre_built.len() > 3 {
+            this.ensure_tree2();
+        }
+        if pre_built.len() > 4 {
+            this.ensure_tree3();
+        }
+        if pre_built.len() > 5 {
+            this.ensure_tree4();
+        }
+        this
     }
 
     /// The number of quads stored in this [`QuadForest`].
@@ -726,7 +794,28 @@ mod test {
         assert_eq!(qf.best_tree_no_build(&p(1, 2, 3, 4)), -1);
 
         use Order::*;
-        let qf = QuadForest::<LazyRt>::new_param(GSPO, SPOG, PGSO, OPSG, SOGP, GOPS);
+        let qf = QuadForest::<RuntimeFat>::new_rt(&[GSPO], &[SPOG, PGSO, OPSG, SOGP, GOPS]);
+        assert_eq!(qf.best_tree_no_build(&p(1, 0, 0, 0)), -1);
+        assert_eq!(qf.best_tree_no_build(&p(0, 2, 0, 0)), -1);
+        assert_eq!(qf.best_tree_no_build(&p(0, 0, 3, 0)), -1);
+        assert_eq!(qf.best_tree_no_build(&p(0, 0, 0, 4)), -1);
+        assert_eq!(qf.best_tree_no_build(&p(1, 2, 0, 0)), -1);
+        assert_eq!(qf.best_tree_no_build(&p(0, 2, 3, 0)), -1);
+        assert_eq!(qf.best_tree_no_build(&p(0, 0, 3, 4)), -1);
+        assert_eq!(qf.best_tree_no_build(&p(1, 0, 3, 4)), -1);
+        assert_eq!(qf.best_tree_no_build(&p(1, 2, 3, 4)), -1);
+        qf.ensure_tree1();
+        assert_eq!(qf.best_tree_no_build(&p(1, 0, 0, 0)), -1);
+        assert_eq!(qf.best_tree_no_build(&p(0, 2, 0, 0)), 1);
+        assert_eq!(qf.best_tree_no_build(&p(0, 0, 3, 0)), -1);
+        assert_eq!(qf.best_tree_no_build(&p(0, 0, 0, 4)), -1);
+        assert_eq!(qf.best_tree_no_build(&p(1, 2, 0, 0)), 1);
+        assert_eq!(qf.best_tree_no_build(&p(0, 2, 3, 0)), 1);
+        assert_eq!(qf.best_tree_no_build(&p(0, 0, 3, 4)), -1);
+        assert_eq!(qf.best_tree_no_build(&p(1, 0, 3, 4)), -1);
+        assert_eq!(qf.best_tree_no_build(&p(1, 2, 3, 4)), -1);
+
+        let qf = QuadForest::<RuntimeSlim>::new_rt(&[GSPO], &[SPOG, PGSO, OPSG, SOGP, GOPS]);
         assert_eq!(qf.best_tree_no_build(&p(1, 0, 0, 0)), -1);
         assert_eq!(qf.best_tree_no_build(&p(0, 2, 0, 0)), -1);
         assert_eq!(qf.best_tree_no_build(&p(0, 0, 3, 0)), -1);
@@ -795,7 +884,18 @@ mod test {
         assert_eq!(qf.best_tree(&p(1, 2, 3, 4)), -1);
 
         use Order::*;
-        let qf = QuadForest::<LazyRt>::new_param(GSPO, SPOG, PGSO, OPSG, SOGP, GOPS);
+        let qf = QuadForest::<RuntimeFat>::new_rt(&[GSPO], &[SPOG, PGSO, OPSG, SOGP, GOPS]);
+        assert_eq!(qf.best_tree(&p(1, 0, 0, 0)), 0);
+        assert_eq!(qf.best_tree(&p(0, 2, 0, 0)), 1);
+        assert_eq!(qf.best_tree(&p(0, 0, 3, 0)), 2);
+        assert_eq!(qf.best_tree(&p(0, 0, 0, 4)), -1);
+        assert_eq!(qf.best_tree(&p(1, 2, 0, 0)), 0);
+        assert_eq!(qf.best_tree(&p(0, 2, 3, 0)), 2);
+        assert_eq!(qf.best_tree(&p(0, 0, 3, 4)), 4);
+        assert_eq!(qf.best_tree(&p(1, 0, 3, 4)), 3);
+        assert_eq!(qf.best_tree(&p(1, 2, 3, 4)), -1);
+
+        let qf = QuadForest::<RuntimeSlim>::new_rt(&[GSPO], &[SPOG, PGSO, OPSG, SOGP, GOPS]);
         assert_eq!(qf.best_tree(&p(1, 0, 0, 0)), 0);
         assert_eq!(qf.best_tree(&p(0, 2, 0, 0)), 1);
         assert_eq!(qf.best_tree(&p(0, 0, 3, 0)), 2);
@@ -878,9 +978,45 @@ mod test {
     }
 
     #[test]
-    fn iter_matching_lazy_runtime_forest() {
+    fn iter_matching_runtime_fat_forest() {
         use Order::*;
-        let mut qf = QuadForest::<LazyRt>::new_param(GSPO, SPOG, PGSO, OPSG, SOGP, GOPS);
+        let mut qf = QuadForest::<RuntimeFat>::new_rt(&[GSPO], &[SPOG, PGSO, OPSG, SOGP, GOPS]);
+        populate(&mut qf);
+        for (pattern, expected) in iter_matching_tests() {
+            assert_eq!(
+                set(qf.iter_matching_no_build(pattern)),
+                set(expected),
+                "for pattern {:?}",
+                pattern
+            );
+        }
+        assert!(qf.trees[0].get().is_none());
+        qf.ensure_tree0();
+        assert!(qf.trees[0].get().is_some());
+        for (pattern, expected) in iter_matching_tests() {
+            assert_eq!(
+                set(qf.iter_matching_no_build(pattern)),
+                set(expected),
+                "for pattern {:?}",
+                pattern
+            );
+        }
+        assert!(qf.trees[4].get().is_none());
+        for (pattern, expected) in iter_matching_tests() {
+            assert_eq!(
+                set(qf.iter_matching(pattern)),
+                set(expected),
+                "for pattern {:?}",
+                pattern
+            );
+        }
+        assert!(qf.trees[4].get().is_some());
+    }
+
+    #[test]
+    fn iter_matching_runtime_slim_forest() {
+        use Order::*;
+        let mut qf = QuadForest::<RuntimeSlim>::new_rt(&[GSPO], &[SPOG, PGSO, OPSG, SOGP, GOPS]);
         populate(&mut qf);
         for (pattern, expected) in iter_matching_tests() {
             assert_eq!(

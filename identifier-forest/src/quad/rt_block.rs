@@ -1,24 +1,25 @@
-//! Define the type [`RtBlock`] and the associated enum [`Order`].
+//! Define the type [`RtfBlock`] and the associated enum [`Order`].
 use super::*;
 use crate::Identifier;
 use std::cmp::{Ord, Ordering, PartialOrd};
 use std::ops::RangeInclusive;
 
-/// A [`Block`] implementation where the sorting order is decided at runtime,
+/// "RunTime Fat Block":
+/// a [`Block`] implementation where the sorting order is decided at runtime,
 /// and managed through an additional components in blocks.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-pub struct RtBlock<I: Identifier> {
+pub struct RtfBlock<I: Identifier> {
     data: [I; 4],
     order: Order,
 }
 
-impl<I: Identifier> From<RtBlock<I>> for [I; 4] {
-    fn from(other: RtBlock<I>) -> Self {
+impl<I: Identifier> From<RtfBlock<I>> for [I; 4] {
+    fn from(other: RtfBlock<I>) -> Self {
         other.data
     }
 }
 
-impl<I: Identifier> Ord for RtBlock<I> {
+impl<I: Identifier> Ord for RtfBlock<I> {
     fn cmp(&self, other: &Self) -> Ordering {
         debug_assert_eq!(self.order, other.order);
         // TODO: different order based on self.0[4]
@@ -31,17 +32,17 @@ impl<I: Identifier> Ord for RtBlock<I> {
     }
 }
 
-impl<I: Identifier> PartialOrd for RtBlock<I> {
+impl<I: Identifier> PartialOrd for RtfBlock<I> {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         Some(self.cmp(other))
     }
 }
 
-impl<I: Identifier> Block<I> for RtBlock<I> {
+impl<I: Identifier> Block<I> for RtfBlock<I> {
     type Param = Order;
 
     fn new(data: [I; 4], order: Order) -> Self {
-        RtBlock { data, order }
+        RtfBlock { data, order }
     }
 
     fn spog(&self, _order: Order) -> [I; 4] {
@@ -82,7 +83,7 @@ impl<I: Identifier> Block<I> for RtBlock<I> {
 
 //
 
-/// Order parameter for [`RtBlock`].
+/// Order parameter for [`RtfBlock`].
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum Order {
     /// SPOG
@@ -176,12 +177,13 @@ impl Default for Order {
 
 //
 
-/// A [`Block`] implementation where the sorting order is decided at runtime
+/// "RunTime Slim Block":
+/// a [`Block`] implementation where the sorting order is decided at runtime
 /// and managed by permutating the elements of the block.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-pub struct RtBlock2<I: Identifier>([I; 4]);
+pub struct RtsBlock<I: Identifier>([I; 4]);
 
-impl<I: Identifier> Block<I> for RtBlock2<I> {
+impl<I: Identifier> Block<I> for RtsBlock<I> {
     type Param = Order;
 
     fn new(spog: [I; 4], order: Order) -> Self {
@@ -189,7 +191,7 @@ impl<I: Identifier> Block<I> for RtBlock2<I> {
         for (i, j) in order.idx().iter().enumerate() {
             inner[i] = spog[*j];
         }
-        RtBlock2(inner)
+        RtsBlock(inner)
     }
 
     fn spog(&self, param: Order) -> [I; 4] {
@@ -239,370 +241,194 @@ impl<I: Identifier> Block<I> for RtBlock2<I> {
 //   #    #####  ####     #    ####
 //
 
-#[cfg(test)]
-mod test {
-    use super::*;
-    use Order::{GSPO, SPOG};
+macro_rules! rtblock_test {
+    ($mod: ident, $typ: ident) => {
+        #[cfg(test)]
+        mod $mod {
+            use super::*;
+            use Order::{GSPO, SPOG};
 
-    #[test]
-    fn spog_cmp() {
-        assert!(RtBlock::new([1, 1, 1, 1], SPOG) <= RtBlock::new([1, 1, 1, 1], SPOG));
-        assert!(RtBlock::new([1, 1, 1, 1], SPOG) < RtBlock::new([1, 1, 1, 2], SPOG));
-        assert!(RtBlock::new([1, 1, 1, 1], SPOG) < RtBlock::new([1, 1, 2, 0], SPOG));
-        assert!(RtBlock::new([1, 1, 1, 1], SPOG) < RtBlock::new([1, 2, 0, 0], SPOG));
-        assert!(RtBlock::new([1, 1, 1, 1], SPOG) < RtBlock::new([2, 0, 0, 0], SPOG));
-    }
+            type RtBlock<I> = $typ<I>;
 
-    #[test]
-    fn spog_priority() {
-        assert_eq!(RtBlock::priority_for(&p(0, 0, 0, 0), SPOG), 0);
-        assert_eq!(RtBlock::priority_for(&p(1, 0, 0, 0), SPOG), 1);
-        assert_eq!(RtBlock::priority_for(&p(0, 1, 0, 0), SPOG), 0);
-        assert_eq!(RtBlock::priority_for(&p(0, 0, 1, 0), SPOG), 0);
-        assert_eq!(RtBlock::priority_for(&p(0, 0, 0, 1), SPOG), 0);
-        assert_eq!(RtBlock::priority_for(&p(1, 1, 0, 0), SPOG), 2);
-        assert_eq!(RtBlock::priority_for(&p(0, 1, 1, 0), SPOG), 0);
-        assert_eq!(RtBlock::priority_for(&p(0, 0, 1, 1), SPOG), 0);
-        assert_eq!(RtBlock::priority_for(&p(1, 1, 0, 1), SPOG), 2);
-        assert_eq!(RtBlock::priority_for(&p(1, 1, 1, 0), SPOG), 3);
-        assert_eq!(RtBlock::priority_for(&p(1, 1, 1, 1), SPOG), 4);
-    }
+            #[test]
+            fn spog_cmp() {
+                assert!(RtBlock::new([1, 1, 1, 1], SPOG) <= RtBlock::new([1, 1, 1, 1], SPOG));
+                assert!(RtBlock::new([1, 1, 1, 1], SPOG) < RtBlock::new([1, 1, 1, 2], SPOG));
+                assert!(RtBlock::new([1, 1, 1, 1], SPOG) < RtBlock::new([1, 1, 2, 0], SPOG));
+                assert!(RtBlock::new([1, 1, 1, 1], SPOG) < RtBlock::new([1, 2, 0, 0], SPOG));
+                assert!(RtBlock::new([1, 1, 1, 1], SPOG) < RtBlock::new([2, 0, 0, 0], SPOG));
+            }
 
-    #[test]
-    fn spog_range_and_filter() {
-        let rf = |p| RtBlock::range_and_filter(p, SPOG);
-        let b = |s, p, o, g| bo(s, p, o, g, SPOG);
-        assert_eq!(
-            rf(p(0, 0, 0, 0)),
-            (b(0, 0, 0, 0)..=b(9, 9, 9, 9), p(0, 0, 0, 0))
-        );
-        assert_eq!(
-            rf(p(1, 0, 0, 0)),
-            (b(1, 0, 0, 0)..=b(1, 9, 9, 9), p(0, 0, 0, 0))
-        );
-        assert_eq!(
-            rf(p(0, 2, 0, 0)),
-            (b(0, 0, 0, 0)..=b(9, 9, 9, 9), p(0, 2, 0, 0))
-        );
-        assert_eq!(
-            rf(p(0, 0, 3, 0)),
-            (b(0, 0, 0, 0)..=b(9, 9, 9, 9), p(0, 0, 3, 0))
-        );
-        assert_eq!(
-            rf(p(0, 0, 0, 4)),
-            (b(0, 0, 0, 0)..=b(9, 9, 9, 9), p(0, 0, 0, 4))
-        );
-        assert_eq!(
-            rf(p(1, 2, 0, 0)),
-            (b(1, 2, 0, 0)..=b(1, 2, 9, 9), p(0, 0, 0, 0))
-        );
-        assert_eq!(
-            rf(p(0, 2, 3, 0)),
-            (b(0, 0, 0, 0)..=b(9, 9, 9, 9), p(0, 2, 3, 0))
-        );
-        assert_eq!(
-            rf(p(0, 0, 3, 4)),
-            (b(0, 0, 0, 0)..=b(9, 9, 9, 9), p(0, 0, 3, 4))
-        );
-        assert_eq!(
-            rf(p(1, 2, 0, 4)),
-            (b(1, 2, 0, 0)..=b(1, 2, 9, 9), p(0, 0, 0, 4))
-        );
-        assert_eq!(
-            rf(p(1, 2, 3, 0)),
-            (b(1, 2, 3, 0)..=b(1, 2, 3, 9), p(0, 0, 0, 0))
-        );
-        assert_eq!(
-            rf(p(1, 2, 3, 4)),
-            (b(1, 2, 3, 4)..=b(1, 2, 3, 4), p(0, 0, 0, 0))
-        );
-    }
+            #[test]
+            fn spog_priority() {
+                assert_eq!(RtBlock::priority_for(&p(0, 0, 0, 0), SPOG), 0);
+                assert_eq!(RtBlock::priority_for(&p(1, 0, 0, 0), SPOG), 1);
+                assert_eq!(RtBlock::priority_for(&p(0, 1, 0, 0), SPOG), 0);
+                assert_eq!(RtBlock::priority_for(&p(0, 0, 1, 0), SPOG), 0);
+                assert_eq!(RtBlock::priority_for(&p(0, 0, 0, 1), SPOG), 0);
+                assert_eq!(RtBlock::priority_for(&p(1, 1, 0, 0), SPOG), 2);
+                assert_eq!(RtBlock::priority_for(&p(0, 1, 1, 0), SPOG), 0);
+                assert_eq!(RtBlock::priority_for(&p(0, 0, 1, 1), SPOG), 0);
+                assert_eq!(RtBlock::priority_for(&p(1, 1, 0, 1), SPOG), 2);
+                assert_eq!(RtBlock::priority_for(&p(1, 1, 1, 0), SPOG), 3);
+                assert_eq!(RtBlock::priority_for(&p(1, 1, 1, 1), SPOG), 4);
+            }
 
-    #[test]
-    fn gspo_cmp() {
-        assert!(RtBlock::new([1, 1, 1, 1], GSPO) <= RtBlock::new([1, 1, 1, 1], GSPO));
-        assert!(RtBlock::new([1, 1, 1, 1], GSPO) < RtBlock::new([1, 1, 2, 1], GSPO));
-        assert!(RtBlock::new([1, 1, 1, 1], GSPO) < RtBlock::new([1, 2, 0, 1], GSPO));
-        assert!(RtBlock::new([1, 1, 1, 1], GSPO) < RtBlock::new([2, 0, 0, 1], GSPO));
-        assert!(RtBlock::new([1, 1, 1, 1], GSPO) < RtBlock::new([0, 0, 0, 2], GSPO));
-    }
+            #[test]
+            fn spog_range_and_filter() {
+                let rf = |p| RtBlock::range_and_filter(p, SPOG);
+                let b = |s, p, o, g| bo(s, p, o, g, SPOG);
+                assert_eq!(
+                    rf(p(0, 0, 0, 0)),
+                    (b(0, 0, 0, 0)..=b(9, 9, 9, 9), p(0, 0, 0, 0))
+                );
+                assert_eq!(
+                    rf(p(1, 0, 0, 0)),
+                    (b(1, 0, 0, 0)..=b(1, 9, 9, 9), p(0, 0, 0, 0))
+                );
+                assert_eq!(
+                    rf(p(0, 2, 0, 0)),
+                    (b(0, 0, 0, 0)..=b(9, 9, 9, 9), p(0, 2, 0, 0))
+                );
+                assert_eq!(
+                    rf(p(0, 0, 3, 0)),
+                    (b(0, 0, 0, 0)..=b(9, 9, 9, 9), p(0, 0, 3, 0))
+                );
+                assert_eq!(
+                    rf(p(0, 0, 0, 4)),
+                    (b(0, 0, 0, 0)..=b(9, 9, 9, 9), p(0, 0, 0, 4))
+                );
+                assert_eq!(
+                    rf(p(1, 2, 0, 0)),
+                    (b(1, 2, 0, 0)..=b(1, 2, 9, 9), p(0, 0, 0, 0))
+                );
+                assert_eq!(
+                    rf(p(0, 2, 3, 0)),
+                    (b(0, 0, 0, 0)..=b(9, 9, 9, 9), p(0, 2, 3, 0))
+                );
+                assert_eq!(
+                    rf(p(0, 0, 3, 4)),
+                    (b(0, 0, 0, 0)..=b(9, 9, 9, 9), p(0, 0, 3, 4))
+                );
+                assert_eq!(
+                    rf(p(1, 2, 0, 4)),
+                    (b(1, 2, 0, 0)..=b(1, 2, 9, 9), p(0, 0, 0, 4))
+                );
+                assert_eq!(
+                    rf(p(1, 2, 3, 0)),
+                    (b(1, 2, 3, 0)..=b(1, 2, 3, 9), p(0, 0, 0, 0))
+                );
+                assert_eq!(
+                    rf(p(1, 2, 3, 4)),
+                    (b(1, 2, 3, 4)..=b(1, 2, 3, 4), p(0, 0, 0, 0))
+                );
+            }
 
-    #[test]
-    fn gspo_priority() {
-        assert_eq!(RtBlock::priority_for(&p(0, 0, 0, 0), GSPO), 0);
-        assert_eq!(RtBlock::priority_for(&p(1, 0, 0, 0), GSPO), 0);
-        assert_eq!(RtBlock::priority_for(&p(0, 1, 0, 0), GSPO), 0);
-        assert_eq!(RtBlock::priority_for(&p(0, 0, 1, 0), GSPO), 0);
-        assert_eq!(RtBlock::priority_for(&p(0, 0, 0, 1), GSPO), 1);
-        assert_eq!(RtBlock::priority_for(&p(1, 1, 0, 0), GSPO), 0);
-        assert_eq!(RtBlock::priority_for(&p(0, 1, 1, 0), GSPO), 0);
-        assert_eq!(RtBlock::priority_for(&p(0, 0, 1, 1), GSPO), 1);
-        assert_eq!(RtBlock::priority_for(&p(1, 0, 1, 1), GSPO), 2);
-        assert_eq!(RtBlock::priority_for(&p(1, 1, 0, 1), GSPO), 3);
-        assert_eq!(RtBlock::priority_for(&p(1, 1, 1, 1), GSPO), 4);
-    }
+            #[test]
+            fn gspo_cmp() {
+                assert!(RtBlock::new([1, 1, 1, 1], GSPO) <= RtBlock::new([1, 1, 1, 1], GSPO));
+                assert!(RtBlock::new([1, 1, 1, 1], GSPO) < RtBlock::new([1, 1, 2, 1], GSPO));
+                assert!(RtBlock::new([1, 1, 1, 1], GSPO) < RtBlock::new([1, 2, 0, 1], GSPO));
+                assert!(RtBlock::new([1, 1, 1, 1], GSPO) < RtBlock::new([2, 0, 0, 1], GSPO));
+                assert!(RtBlock::new([1, 1, 1, 1], GSPO) < RtBlock::new([0, 0, 0, 2], GSPO));
+            }
 
-    #[test]
-    fn gspo_range_and_filter() {
-        let rf = |p| RtBlock::range_and_filter(p, GSPO);
-        let b = |s, p, o, g| bo(s, p, o, g, GSPO);
-        assert_eq!(
-            rf(p(0, 0, 0, 0)),
-            (b(0, 0, 0, 0)..=b(9, 9, 9, 9), p(0, 0, 0, 0))
-        );
-        assert_eq!(
-            rf(p(1, 0, 0, 0)),
-            (b(0, 0, 0, 0)..=b(9, 9, 9, 9), p(1, 0, 0, 0))
-        );
-        assert_eq!(
-            rf(p(0, 2, 0, 0)),
-            (b(0, 0, 0, 0)..=b(9, 9, 9, 9), p(0, 2, 0, 0))
-        );
-        assert_eq!(
-            rf(p(0, 0, 3, 0)),
-            (b(0, 0, 0, 0)..=b(9, 9, 9, 9), p(0, 0, 3, 0))
-        );
-        assert_eq!(
-            rf(p(0, 0, 0, 4)),
-            (b(0, 0, 0, 4)..=b(9, 9, 9, 4), p(0, 0, 0, 0))
-        );
-        assert_eq!(
-            rf(p(1, 2, 0, 0)),
-            (b(0, 0, 0, 0)..=b(9, 9, 9, 9), p(1, 2, 0, 0))
-        );
-        assert_eq!(
-            rf(p(0, 2, 3, 0)),
-            (b(0, 0, 0, 0)..=b(9, 9, 9, 9), p(0, 2, 3, 0))
-        );
-        assert_eq!(
-            rf(p(0, 0, 3, 4)),
-            (b(0, 0, 0, 4)..=b(9, 9, 9, 4), p(0, 0, 3, 0))
-        );
-        assert_eq!(
-            rf(p(1, 0, 3, 4)),
-            (b(1, 0, 0, 4)..=b(1, 9, 9, 4), p(0, 0, 3, 0))
-        );
-        assert_eq!(
-            rf(p(1, 2, 0, 4)),
-            (b(1, 2, 0, 4)..=b(1, 2, 9, 4), p(0, 0, 0, 0))
-        );
-        assert_eq!(
-            rf(p(1, 2, 3, 4)),
-            (b(1, 2, 3, 4)..=b(1, 2, 3, 4), p(0, 0, 0, 0))
-        );
-    }
+            #[test]
+            fn gspo_priority() {
+                assert_eq!(RtBlock::priority_for(&p(0, 0, 0, 0), GSPO), 0);
+                assert_eq!(RtBlock::priority_for(&p(1, 0, 0, 0), GSPO), 0);
+                assert_eq!(RtBlock::priority_for(&p(0, 1, 0, 0), GSPO), 0);
+                assert_eq!(RtBlock::priority_for(&p(0, 0, 1, 0), GSPO), 0);
+                assert_eq!(RtBlock::priority_for(&p(0, 0, 0, 1), GSPO), 1);
+                assert_eq!(RtBlock::priority_for(&p(1, 1, 0, 0), GSPO), 0);
+                assert_eq!(RtBlock::priority_for(&p(0, 1, 1, 0), GSPO), 0);
+                assert_eq!(RtBlock::priority_for(&p(0, 0, 1, 1), GSPO), 1);
+                assert_eq!(RtBlock::priority_for(&p(1, 0, 1, 1), GSPO), 2);
+                assert_eq!(RtBlock::priority_for(&p(1, 1, 0, 1), GSPO), 3);
+                assert_eq!(RtBlock::priority_for(&p(1, 1, 1, 1), GSPO), 4);
+            }
 
-    /// Block constructor, where 9 is interpreted as usize::MAX
-    fn bo(s: usize, p: usize, o: usize, g: usize, ord: Order) -> RtBlock<usize> {
-        [max9(s), max9(p), max9(o), max9(g)].into_block(ord)
-    }
+            #[test]
+            fn gspo_range_and_filter() {
+                let rf = |p| RtBlock::range_and_filter(p, GSPO);
+                let b = |s, p, o, g| bo(s, p, o, g, GSPO);
+                assert_eq!(
+                    rf(p(0, 0, 0, 0)),
+                    (b(0, 0, 0, 0)..=b(9, 9, 9, 9), p(0, 0, 0, 0))
+                );
+                assert_eq!(
+                    rf(p(1, 0, 0, 0)),
+                    (b(0, 0, 0, 0)..=b(9, 9, 9, 9), p(1, 0, 0, 0))
+                );
+                assert_eq!(
+                    rf(p(0, 2, 0, 0)),
+                    (b(0, 0, 0, 0)..=b(9, 9, 9, 9), p(0, 2, 0, 0))
+                );
+                assert_eq!(
+                    rf(p(0, 0, 3, 0)),
+                    (b(0, 0, 0, 0)..=b(9, 9, 9, 9), p(0, 0, 3, 0))
+                );
+                assert_eq!(
+                    rf(p(0, 0, 0, 4)),
+                    (b(0, 0, 0, 4)..=b(9, 9, 9, 4), p(0, 0, 0, 0))
+                );
+                assert_eq!(
+                    rf(p(1, 2, 0, 0)),
+                    (b(0, 0, 0, 0)..=b(9, 9, 9, 9), p(1, 2, 0, 0))
+                );
+                assert_eq!(
+                    rf(p(0, 2, 3, 0)),
+                    (b(0, 0, 0, 0)..=b(9, 9, 9, 9), p(0, 2, 3, 0))
+                );
+                assert_eq!(
+                    rf(p(0, 0, 3, 4)),
+                    (b(0, 0, 0, 4)..=b(9, 9, 9, 4), p(0, 0, 3, 0))
+                );
+                assert_eq!(
+                    rf(p(1, 0, 3, 4)),
+                    (b(1, 0, 0, 4)..=b(1, 9, 9, 4), p(0, 0, 3, 0))
+                );
+                assert_eq!(
+                    rf(p(1, 2, 0, 4)),
+                    (b(1, 2, 0, 4)..=b(1, 2, 9, 4), p(0, 0, 0, 0))
+                );
+                assert_eq!(
+                    rf(p(1, 2, 3, 4)),
+                    (b(1, 2, 3, 4)..=b(1, 2, 3, 4), p(0, 0, 0, 0))
+                );
+            }
 
-    /// Pattern constructor, where
-    /// - 0 is interpreted as None,
-    /// - other values are interpreted as Some(value),
-    /// - 9 is interpreted as Some(usize::MAX)
-    fn p(s: usize, p: usize, o: usize, g: usize) -> [Option<usize>; 4] {
-        [i2opt(s), i2opt(p), i2opt(o), i2opt(g)]
-    }
+            /// Block constructor, where 9 is interpreted as usize::MAX
+            fn bo(s: usize, p: usize, o: usize, g: usize, ord: Order) -> RtBlock<usize> {
+                [max9(s), max9(p), max9(o), max9(g)].into_block(ord)
+            }
 
-    /// Convenient conversion of usize where 9 is interpretted as MAX, used by b(), p() and p() above.
-    fn max9(i: usize) -> usize {
-        match i {
-            9 => usize::MAX,
-            n => n,
+            /// Pattern constructor, where
+            /// - 0 is interpreted as None,
+            /// - other values are interpreted as Some(value),
+            /// - 9 is interpreted as Some(usize::MAX)
+            fn p(s: usize, p: usize, o: usize, g: usize) -> [Option<usize>; 4] {
+                [i2opt(s), i2opt(p), i2opt(o), i2opt(g)]
+            }
+
+            /// Convenient conversion of usize where 9 is interpretted as MAX, used by b(), p() and p() above.
+            fn max9(i: usize) -> usize {
+                match i {
+                    9 => usize::MAX,
+                    n => n,
+                }
+            }
+
+            /// Convenient conversion of usize to Option<usize>, used by p() and p() above.
+            fn i2opt(i: usize) -> Option<usize> {
+                match i {
+                    0 => None,
+                    n => Some(max9(n)),
+                }
+            }
         }
-    }
-
-    /// Convenient conversion of usize to Option<usize>, used by p() and p() above.
-    fn i2opt(i: usize) -> Option<usize> {
-        match i {
-            0 => None,
-            n => Some(max9(n)),
-        }
-    }
+    };
 }
 
-#[cfg(test)]
-mod test2 {
-    use super::*;
-    use Order::{GSPO, SPOG};
-
-    type RtBlock<I> = RtBlock2<I>;
-
-    #[test]
-    fn spog_cmp() {
-        assert!(RtBlock::new([1, 1, 1, 1], SPOG) <= RtBlock::new([1, 1, 1, 1], SPOG));
-        assert!(RtBlock::new([1, 1, 1, 1], SPOG) < RtBlock::new([1, 1, 1, 2], SPOG));
-        assert!(RtBlock::new([1, 1, 1, 1], SPOG) < RtBlock::new([1, 1, 2, 0], SPOG));
-        assert!(RtBlock::new([1, 1, 1, 1], SPOG) < RtBlock::new([1, 2, 0, 0], SPOG));
-        assert!(RtBlock::new([1, 1, 1, 1], SPOG) < RtBlock::new([2, 0, 0, 0], SPOG));
-    }
-
-    #[test]
-    fn spog_priority() {
-        assert_eq!(RtBlock::priority_for(&p(0, 0, 0, 0), SPOG), 0);
-        assert_eq!(RtBlock::priority_for(&p(1, 0, 0, 0), SPOG), 1);
-        assert_eq!(RtBlock::priority_for(&p(0, 1, 0, 0), SPOG), 0);
-        assert_eq!(RtBlock::priority_for(&p(0, 0, 1, 0), SPOG), 0);
-        assert_eq!(RtBlock::priority_for(&p(0, 0, 0, 1), SPOG), 0);
-        assert_eq!(RtBlock::priority_for(&p(1, 1, 0, 0), SPOG), 2);
-        assert_eq!(RtBlock::priority_for(&p(0, 1, 1, 0), SPOG), 0);
-        assert_eq!(RtBlock::priority_for(&p(0, 0, 1, 1), SPOG), 0);
-        assert_eq!(RtBlock::priority_for(&p(1, 1, 0, 1), SPOG), 2);
-        assert_eq!(RtBlock::priority_for(&p(1, 1, 1, 0), SPOG), 3);
-        assert_eq!(RtBlock::priority_for(&p(1, 1, 1, 1), SPOG), 4);
-    }
-
-    #[test]
-    fn spog_range_and_filter() {
-        let rf = |p| RtBlock::range_and_filter(p, SPOG);
-        let b = |s, p, o, g| bo(s, p, o, g, SPOG);
-        assert_eq!(
-            rf(p(0, 0, 0, 0)),
-            (b(0, 0, 0, 0)..=b(9, 9, 9, 9), p(0, 0, 0, 0))
-        );
-        assert_eq!(
-            rf(p(1, 0, 0, 0)),
-            (b(1, 0, 0, 0)..=b(1, 9, 9, 9), p(0, 0, 0, 0))
-        );
-        assert_eq!(
-            rf(p(0, 2, 0, 0)),
-            (b(0, 0, 0, 0)..=b(9, 9, 9, 9), p(0, 2, 0, 0))
-        );
-        assert_eq!(
-            rf(p(0, 0, 3, 0)),
-            (b(0, 0, 0, 0)..=b(9, 9, 9, 9), p(0, 0, 3, 0))
-        );
-        assert_eq!(
-            rf(p(0, 0, 0, 4)),
-            (b(0, 0, 0, 0)..=b(9, 9, 9, 9), p(0, 0, 0, 4))
-        );
-        assert_eq!(
-            rf(p(1, 2, 0, 0)),
-            (b(1, 2, 0, 0)..=b(1, 2, 9, 9), p(0, 0, 0, 0))
-        );
-        assert_eq!(
-            rf(p(0, 2, 3, 0)),
-            (b(0, 0, 0, 0)..=b(9, 9, 9, 9), p(0, 2, 3, 0))
-        );
-        assert_eq!(
-            rf(p(0, 0, 3, 4)),
-            (b(0, 0, 0, 0)..=b(9, 9, 9, 9), p(0, 0, 3, 4))
-        );
-        assert_eq!(
-            rf(p(1, 2, 0, 4)),
-            (b(1, 2, 0, 0)..=b(1, 2, 9, 9), p(0, 0, 0, 4))
-        );
-        assert_eq!(
-            rf(p(1, 2, 3, 0)),
-            (b(1, 2, 3, 0)..=b(1, 2, 3, 9), p(0, 0, 0, 0))
-        );
-        assert_eq!(
-            rf(p(1, 2, 3, 4)),
-            (b(1, 2, 3, 4)..=b(1, 2, 3, 4), p(0, 0, 0, 0))
-        );
-    }
-
-    #[test]
-    fn gspo_cmp() {
-        assert!(RtBlock::new([1, 1, 1, 1], GSPO) <= RtBlock::new([1, 1, 1, 1], GSPO));
-        assert!(RtBlock::new([1, 1, 1, 1], GSPO) < RtBlock::new([1, 1, 2, 1], GSPO));
-        assert!(RtBlock::new([1, 1, 1, 1], GSPO) < RtBlock::new([1, 2, 0, 1], GSPO));
-        assert!(RtBlock::new([1, 1, 1, 1], GSPO) < RtBlock::new([2, 0, 0, 1], GSPO));
-        assert!(RtBlock::new([1, 1, 1, 1], GSPO) < RtBlock::new([0, 0, 0, 2], GSPO));
-    }
-
-    #[test]
-    fn gspo_priority() {
-        assert_eq!(RtBlock::priority_for(&p(0, 0, 0, 0), GSPO), 0);
-        assert_eq!(RtBlock::priority_for(&p(1, 0, 0, 0), GSPO), 0);
-        assert_eq!(RtBlock::priority_for(&p(0, 1, 0, 0), GSPO), 0);
-        assert_eq!(RtBlock::priority_for(&p(0, 0, 1, 0), GSPO), 0);
-        assert_eq!(RtBlock::priority_for(&p(0, 0, 0, 1), GSPO), 1);
-        assert_eq!(RtBlock::priority_for(&p(1, 1, 0, 0), GSPO), 0);
-        assert_eq!(RtBlock::priority_for(&p(0, 1, 1, 0), GSPO), 0);
-        assert_eq!(RtBlock::priority_for(&p(0, 0, 1, 1), GSPO), 1);
-        assert_eq!(RtBlock::priority_for(&p(1, 0, 1, 1), GSPO), 2);
-        assert_eq!(RtBlock::priority_for(&p(1, 1, 0, 1), GSPO), 3);
-        assert_eq!(RtBlock::priority_for(&p(1, 1, 1, 1), GSPO), 4);
-    }
-
-    #[test]
-    fn gspo_range_and_filter() {
-        let rf = |p| RtBlock::range_and_filter(p, GSPO);
-        let b = |s, p, o, g| bo(s, p, o, g, GSPO);
-        assert_eq!(
-            rf(p(0, 0, 0, 0)),
-            (b(0, 0, 0, 0)..=b(9, 9, 9, 9), p(0, 0, 0, 0))
-        );
-        assert_eq!(
-            rf(p(1, 0, 0, 0)),
-            (b(0, 0, 0, 0)..=b(9, 9, 9, 9), p(1, 0, 0, 0))
-        );
-        assert_eq!(
-            rf(p(0, 2, 0, 0)),
-            (b(0, 0, 0, 0)..=b(9, 9, 9, 9), p(0, 2, 0, 0))
-        );
-        assert_eq!(
-            rf(p(0, 0, 3, 0)),
-            (b(0, 0, 0, 0)..=b(9, 9, 9, 9), p(0, 0, 3, 0))
-        );
-        assert_eq!(
-            rf(p(0, 0, 0, 4)),
-            (b(0, 0, 0, 4)..=b(9, 9, 9, 4), p(0, 0, 0, 0))
-        );
-        assert_eq!(
-            rf(p(1, 2, 0, 0)),
-            (b(0, 0, 0, 0)..=b(9, 9, 9, 9), p(1, 2, 0, 0))
-        );
-        assert_eq!(
-            rf(p(0, 2, 3, 0)),
-            (b(0, 0, 0, 0)..=b(9, 9, 9, 9), p(0, 2, 3, 0))
-        );
-        assert_eq!(
-            rf(p(0, 0, 3, 4)),
-            (b(0, 0, 0, 4)..=b(9, 9, 9, 4), p(0, 0, 3, 0))
-        );
-        assert_eq!(
-            rf(p(1, 0, 3, 4)),
-            (b(1, 0, 0, 4)..=b(1, 9, 9, 4), p(0, 0, 3, 0))
-        );
-        assert_eq!(
-            rf(p(1, 2, 0, 4)),
-            (b(1, 2, 0, 4)..=b(1, 2, 9, 4), p(0, 0, 0, 0))
-        );
-        assert_eq!(
-            rf(p(1, 2, 3, 4)),
-            (b(1, 2, 3, 4)..=b(1, 2, 3, 4), p(0, 0, 0, 0))
-        );
-    }
-
-    /// Block constructor, where 9 is interpreted as usize::MAX
-    fn bo(s: usize, p: usize, o: usize, g: usize, ord: Order) -> RtBlock<usize> {
-        [max9(s), max9(p), max9(o), max9(g)].into_block(ord)
-    }
-
-    /// Pattern constructor, where
-    /// - 0 is interpreted as None,
-    /// - other values are interpreted as Some(value),
-    /// - 9 is interpreted as Some(usize::MAX)
-    fn p(s: usize, p: usize, o: usize, g: usize) -> [Option<usize>; 4] {
-        [i2opt(s), i2opt(p), i2opt(o), i2opt(g)]
-    }
-
-    /// Convenient conversion of usize where 9 is interpretted as MAX, used by b(), p() and p() above.
-    fn max9(i: usize) -> usize {
-        match i {
-            9 => usize::MAX,
-            n => n,
-        }
-    }
-
-    /// Convenient conversion of usize to Option<usize>, used by p() and p() above.
-    fn i2opt(i: usize) -> Option<usize> {
-        match i {
-            0 => None,
-            n => Some(max9(n)),
-        }
-    }
-}
+rtblock_test!(test_rtf, RtfBlock);
+rtblock_test!(test_rts, RtsBlock);
