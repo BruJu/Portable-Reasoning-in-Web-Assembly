@@ -144,7 +144,7 @@ fn search_prebuilt(c: &mut Criterion) {
 }
 
 fn load_into<P: QuadForestProfile<Identifier = usize>>(forest: &mut QuadForest<P>) {
-    const MAX: usize = 1000;
+    const MAX: usize = 5000;
     for s in 1..=MAX {
         for p in 1..=MAX {
             if s * p < MAX {
