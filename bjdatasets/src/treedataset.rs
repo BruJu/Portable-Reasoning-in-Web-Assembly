@@ -1,7 +1,7 @@
 use crate::RcQuad;
 
-use identifier_forest::IndexingForest4;
-use identifier_forest::IndexingForest4Filter;
+use identifier_forest::run_time_forest::IndexingForest4;
+use identifier_forest::tree::{ Tree4Iterator, MaybeTree4, Forest4 };
 use sophia::dataset::MutableDataset;
 use sophia::dataset::DQuad;
 use sophia::dataset::DQuadSource;
@@ -28,7 +28,7 @@ use sophia::test_dataset_impl;
 #[derive(Default)]
 pub struct TreeDataset {
     /// Underlying trees that manipulates identifiers
-    forest: IndexingForest4,
+    forest: IndexingForest4<u32>,
     /// A `TermIndexMapU` that matches RcTerms with u32 identifiers
     term_id_map: TermIndexMapU<u32, RcTermFactory>
 }
@@ -38,20 +38,13 @@ impl TreeDataset {
         Self::default()
     }
 
-    pub fn new_anti(s: bool, p: bool, o: bool, g: bool) -> Self {
-        Self {
-            forest: IndexingForest4::new_anti(s, p, o, g),
-            term_id_map: TermIndexMapU::<u32, RcTermFactory>::default()
-        }
-    }
-
     /// Returns an iterator on Sophia Quads that matches the given pattern of indexes.
     /// 
     /// indexes is in the format on four term indexes, in the order Subject,
     /// Prdicate, Object, Graph. None means every term must be matched, a given
     /// value that only the given term must be matched.
     fn quads_with_opt_spog<'s>(&'s self, indexes: [Option<u32>; 4]) -> DQuadSource<'s, Self> {
-        let quads = self.forest.filter(indexes);
+        let quads = self.forest.get_quads(indexes);
         InflatedQuadsIterator::new_box(quads, &self.term_id_map)
     }
 }
@@ -299,7 +292,7 @@ impl Dataset for TreeDataset {
 /// An adapter that transforms an iterator on identifier quads into an iterator
 /// of Sophia Quads
 pub struct InflatedQuadsIterator<'a> {
-    base_iterator: IndexingForest4Filter<'a>,
+    base_iterator: Tree4Iterator<'a, u32>,
     term_id_map: &'a TermIndexMapU<u32, RcTermFactory>,
     last_tuple: Option<[(u32, &'a RcTerm); 3]>,
     last_graph: Option<(u32, &'a RcTerm)>
@@ -309,7 +302,7 @@ impl<'a> InflatedQuadsIterator<'a> {
     /// Builds a Box of InflatedQuadsIterator from an iterator on identifier quad
     /// and a `TermIndexMap` to match the `DQuadSource` interface.
     pub fn new_box(
-        base_iterator: IndexingForest4Filter<'a>,
+        base_iterator: Tree4Iterator<'a, u32>,
         term_id_map: &'a TermIndexMapU<u32, RcTermFactory>
     ) -> Box<InflatedQuadsIterator<'a>> {
         Box::new(InflatedQuadsIterator {
@@ -378,15 +371,17 @@ impl MutableDataset for TreeDataset {
         let gi = self
             .term_id_map
             .make_index_for_graph_name(g.map(RefTerm::from).as_ref());
-        let modified = self.forest.insert([si, pi, oi, gi]);
-        if !modified {
+        let modified = self.forest.insert(&[si, pi, oi, gi]);
+        if modified != Some(true) {
             self.term_id_map.dec_ref(si);
             self.term_id_map.dec_ref(pi);
             self.term_id_map.dec_ref(oi);
             self.term_id_map.dec_ref(gi);
+
+            return Ok(false);
         };
 
-        Ok(modified)
+        Ok(true)
     }
 
     fn remove<T, U, V, W>(
@@ -409,8 +404,8 @@ impl MutableDataset for TreeDataset {
             .term_id_map
             .get_index_for_graph_name(g.map(RefTerm::from).as_ref());
         if let (Some(si), Some(pi), Some(oi), Some(gi)) = (si, pi, oi, gi) {
-            let modified = self.forest.delete([si, pi, oi, gi]);
-            if modified {
+            let modified = self.forest.delete(&[si, pi, oi, gi]);
+            if  modified == Some(true) {
                 self.term_id_map.dec_ref(si);
                 self.term_id_map.dec_ref(pi);
                 self.term_id_map.dec_ref(oi);
@@ -432,7 +427,14 @@ impl TreeDataset {
     /// Ensure the optimal index tree for this forest is built for the given
     /// request pattern.
     pub fn ensure_has_index_for(&mut self, s: bool, p: bool, o: bool, g: bool) {
-        self.forest.ensure_has_index_for(s, p, o, g);
+        self.forest.ensure_has_index_for(
+            &[
+                if s { Some(1_u32) } else { None },
+                if p { Some(1_u32) } else { None },
+                if o { Some(1_u32) } else { None },
+                if g { Some(1_u32) } else { None }
+            ]
+        );
     }
 }
 

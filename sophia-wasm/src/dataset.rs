@@ -6,7 +6,7 @@
 
 use crate::wasm_bindgen_dataset;
 use crate::wasm_bindgen_wrappeddataset;
-use crate::wrappers_example::{ TreeDatasetAntiWrapper, VecOrDatasetWrapper };
+use crate::wrappers_example::VecOrDatasetWrapper;
 use crate::wrapping::*;
 
 extern crate wasm_bindgen;
@@ -44,9 +44,6 @@ wasm_bindgen_dataset!(FullIndexDataset, "FullDataset");
 // Array Dataset (which is not a real set)
 type ArrayDataset = Vec<([BoxTerm; 3], Option<BoxTerm>)>;
 wasm_bindgen_dataset!(ArrayDataset, "ArrayDataset");
-
-// A dataset that redefines the match method
-wasm_bindgen_wrappeddataset!(TreeDatasetAntiWrapper, "AntiTreeDataset");
 
 // Datasets that fills an array instead of the base complicated structure
 type TreeDatasetIntoArrayWrapper = VecOrDatasetWrapper<TreeDataset>;
